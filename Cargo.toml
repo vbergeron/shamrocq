@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/shamrocq", "crates/shamrocq-compiler"]
+resolver = "2"
