@@ -5,8 +5,9 @@ edition = "2021"
 
 [features]
 stats = []
+integration = ["dep:shamrocq-compiler"]
 
 [dependencies]
 
 [build-dependencies]
-shamrocq-compiler = { path = "../shamrocq-compiler" }
+shamrocq-compiler = { path = "../shamrocq-compiler", optional = true }

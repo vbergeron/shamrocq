@@ -1,3 +1,5 @@
+#![cfg(feature = "integration")]
+
 mod common;
 
 use common::{setup, peano, unpeano, print_stats};
