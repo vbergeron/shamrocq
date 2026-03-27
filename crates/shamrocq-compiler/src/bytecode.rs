@@ -17,7 +17,8 @@ pub mod op {
     pub const BIND: u8 = 0x0B;
     pub const DROP: u8 = 0x0C;
     pub const ERROR: u8 = 0x0D;
-    pub const LETREC_FIX: u8 = 0x0E;
+    pub const SLIDE: u8 = 0x0E;
+    pub const FIXPOINT: u8 = 0x0F;
 }
 
 /// Binary encoding helpers used by the compiler to emit bytecode,
@@ -136,15 +137,21 @@ impl Emitter {
         self.code.push(n);
     }
 
+    /// Keep top-of-stack, remove n items below it.
+    pub fn emit_slide(&mut self, n: u8) {
+        self.code.push(op::SLIDE);
+        self.code.push(n);
+    }
+
     pub fn emit_error(&mut self) {
         self.code.push(op::ERROR);
     }
 
-    /// LETREC_FIX(cap_idx): Peek TOS (a closure), patch its
+    /// FIXPOINT(cap_idx): Peek TOS (a closure), patch its
     /// capture[cap_idx] to point to itself, overwrite the slot
     /// 1 below TOS with the closure, then pop TOS.
-    pub fn emit_letrec_fix(&mut self, cap_idx: u8) {
-        self.code.push(op::LETREC_FIX);
+    pub fn emit_fixpoint(&mut self, cap_idx: u8) {
+        self.code.push(op::FIXPOINT);
         self.code.push(cap_idx);
     }
 }

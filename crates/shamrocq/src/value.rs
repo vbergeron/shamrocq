@@ -78,34 +78,4 @@ pub mod tags {
     pub const BUILD_ROOT: u8 = 9;
     pub const BUILD_EDGE: u8 = 10;
     pub const BUILD_HFOREST: u8 = 11;
-
-    pub const NUM_BUILTIN: u8 = 12;
-
-    pub const fn arity(tag: u8) -> u8 {
-        match tag {
-            TRUE | FALSE | NIL | O | LEFT | RIGHT => 0,
-            S => 1,
-            CONS | PAIR | BUILD_ROOT | BUILD_HFOREST => 2,
-            BUILD_EDGE => 3,
-            _ => 0,
-        }
-    }
-
-    pub const fn name(tag: u8) -> &'static str {
-        match tag {
-            TRUE => "True",
-            FALSE => "False",
-            NIL => "Nil",
-            CONS => "Cons",
-            O => "O",
-            S => "S",
-            LEFT => "Left",
-            RIGHT => "Right",
-            PAIR => "Pair",
-            BUILD_ROOT => "Build_root",
-            BUILD_EDGE => "Build_edge",
-            BUILD_HFOREST => "Build_hforest",
-            _ => "?",
-        }
-    }
 }

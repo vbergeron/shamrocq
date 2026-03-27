@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod arena;
+pub mod stats;
 pub mod value;
 pub mod vm;
 
@@ -10,5 +11,12 @@ pub mod funcs {
     include!(concat!(env!("OUT_DIR"), "/funcs.rs"));
 }
 
+pub mod ctors {
+    include!(concat!(env!("OUT_DIR"), "/ctors.rs"));
+}
+
+pub use stats::MemSnapshot;
+#[cfg(feature = "stats")]
+pub use stats::Stats;
 pub use value::{tags, Value};
 pub use vm::{Program, Vm, VmError};

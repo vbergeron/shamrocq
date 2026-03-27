@@ -1,4 +1,8 @@
 use crate::arena::{Arena, ArenaError};
+use crate::stats::stat;
+#[cfg(feature = "stats")]
+use crate::stats::Stats;
+use crate::stats::MemSnapshot;
 use crate::value::Value;
 
 mod op {
@@ -15,13 +19,14 @@ mod op {
     pub const BIND: u8 = 0x0B;
     pub const DROP: u8 = 0x0C;
     pub const ERROR: u8 = 0x0D;
-    pub const LETREC_FIX: u8 = 0x0E;
+    pub const SLIDE: u8 = 0x0E;
+    pub const FIXPOINT: u8 = 0x0F;
 }
 
 #[derive(Debug)]
 pub enum VmError {
     Oom,
-    MatchFailure,
+    MatchFailure { scrutinee_tag: u8, pc: usize },
     InvalidBytecode,
     NotAClosure,
     StackOverflow,
@@ -102,11 +107,22 @@ struct CallFrame {
     frame_base: usize,
 }
 
+impl CallFrame {
+    fn fresh() -> Self {
+        CallFrame {
+            return_pc: 0,
+            frame_base: 0,
+        }
+    }
+}
+
 pub struct Vm<'buf> {
     pub arena: Arena<'buf>,
     globals: [Value; 64],
     n_globals: u16,
     code: &'buf [u8],
+    #[cfg(feature = "stats")]
+    pub stats: Stats,
 }
 
 const MAX_CALL_DEPTH: usize = 256;
@@ -118,11 +134,21 @@ impl<'buf> Vm<'buf> {
             globals: [Value::immediate(0); 64],
             n_globals: 0,
             code: &[],
+            #[cfg(feature = "stats")]
+            stats: Stats::default(),
         }
     }
 
     pub fn reset(&mut self) {
         self.arena.reset();
+    }
+
+    pub fn mem_snapshot(&self) -> MemSnapshot {
+        MemSnapshot {
+            heap_bytes: self.arena.heap_used(),
+            stack_bytes: self.arena.stack_used(),
+            free_bytes: self.arena.free(),
+        }
     }
 
     pub fn load_program(&mut self, prog: &Program<'buf>) -> Result<(), VmError> {
@@ -137,7 +163,14 @@ impl<'buf> Vm<'buf> {
     }
 
     pub fn call(&mut self, global_idx: u16, args: &[Value]) -> Result<Value, VmError> {
-        let mut func = self.globals[global_idx as usize];
+        self.apply(self.globals[global_idx as usize], args)
+    }
+
+    pub fn global_value(&self, idx: u16) -> Value {
+        self.globals[idx as usize]
+    }
+
+    pub fn apply(&mut self, mut func: Value, args: &[Value]) -> Result<Value, VmError> {
         for &arg in args {
             if !func.is_closure() {
                 return Err(VmError::NotAClosure);
@@ -166,6 +199,14 @@ impl<'buf> Vm<'buf> {
         Ok(self.arena.alloc_tuple(tag, fields)?)
     }
 
+    fn record_heap(&mut self) {
+        stat!(self, peak_heap_bytes = max self.arena.heap_used());
+    }
+
+    fn record_stack(&mut self) {
+        stat!(self, peak_stack_bytes = max self.arena.stack_used());
+    }
+
     fn eval(&mut self, start_pc: usize) -> Result<Value, VmError> {
         self.eval_with_frame(start_pc, self.arena.stack_depth())
     }
@@ -173,10 +214,7 @@ impl<'buf> Vm<'buf> {
     fn eval_with_frame(&mut self, start_pc: usize, frame_base: usize) -> Result<Value, VmError> {
         let code = self.code;
         let mut pc = start_pc;
-        let mut call_stack: [CallFrame; MAX_CALL_DEPTH] = core::array::from_fn(|_| CallFrame {
-            return_pc: 0,
-            frame_base: 0,
-        });
+        let mut call_stack: [CallFrame; MAX_CALL_DEPTH] = core::array::from_fn(|_| CallFrame::fresh());
         let mut call_depth: usize = 0;
         let mut frame_base = frame_base;
 
@@ -184,6 +222,8 @@ impl<'buf> Vm<'buf> {
             if pc >= code.len() {
                 return Err(VmError::InvalidBytecode);
             }
+
+            stat!(self, exec_instruction_count += 1);
 
             let opcode = code[pc];
             pc += 1;
@@ -193,6 +233,7 @@ impl<'buf> Vm<'buf> {
                     let tag = code[pc];
                     pc += 1;
                     self.arena.stack_push(Value::immediate(tag))?;
+                    self.record_stack();
                 }
 
                 op::TUPLE => {
@@ -204,7 +245,11 @@ impl<'buf> Vm<'buf> {
                         fields[i] = self.arena.stack_pop();
                     }
                     let val = self.arena.alloc_tuple(tag, &fields[..arity])?;
+                    stat!(self, alloc_count_tuple += 1);
+                    stat!(self, alloc_bytes_total += (arity * 4) as u32);
+                    self.record_heap();
                     self.arena.stack_push(val)?;
+                    self.record_stack();
                 }
 
                 op::LOAD => {
@@ -213,12 +258,14 @@ impl<'buf> Vm<'buf> {
                     let depth_from_top = self.arena.stack_depth() - frame_base - 1 - idx;
                     let val = self.arena.stack_peek(depth_from_top);
                     self.arena.stack_push(val)?;
+                    self.record_stack();
                 }
 
                 op::GLOBAL => {
                     let idx = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
                     pc += 2;
                     self.arena.stack_push(self.globals[idx])?;
+                    self.record_stack();
                 }
 
                 op::CLOSURE => {
@@ -230,7 +277,11 @@ impl<'buf> Vm<'buf> {
                         caps[i] = self.arena.stack_pop();
                     }
                     let val = self.arena.alloc_closure(code_addr, &caps[..n_cap])?;
+                    stat!(self, alloc_count_closure += 1);
+                    stat!(self, alloc_bytes_total += ((1 + n_cap) * 4) as u32);
+                    self.record_heap();
                     self.arena.stack_push(val)?;
+                    self.record_stack();
                 }
 
                 op::APPLY => {
@@ -247,6 +298,8 @@ impl<'buf> Vm<'buf> {
                         frame_base,
                     };
                     call_depth += 1;
+                    stat!(self, exec_apply_count += 1);
+                    stat!(self, exec_peak_call_depth = max call_depth as u32);
 
                     let ca = self.arena.closure_code(func);
                     let n_cap = self.arena.closure_capture_count(func);
@@ -255,6 +308,7 @@ impl<'buf> Vm<'buf> {
                         self.arena.stack_push(self.arena.closure_capture(func, i))?;
                     }
                     self.arena.stack_push(arg)?;
+                    self.record_stack();
                     pc = ca as usize;
                 }
 
@@ -265,6 +319,7 @@ impl<'buf> Vm<'buf> {
                         return Err(VmError::NotAClosure);
                     }
                     self.arena.stack_truncate(frame_base);
+                    stat!(self, exec_tail_apply_count += 1);
 
                     let ca = self.arena.closure_code(func);
                     let n_cap = self.arena.closure_capture_count(func);
@@ -273,6 +328,7 @@ impl<'buf> Vm<'buf> {
                         self.arena.stack_push(self.arena.closure_capture(func, i))?;
                     }
                     self.arena.stack_push(arg)?;
+                    self.record_stack();
                     pc = ca as usize;
                 }
 
@@ -297,6 +353,7 @@ impl<'buf> Vm<'buf> {
 
                     let scrutinee = self.arena.stack_pop();
                     let scrutinee_tag = scrutinee.tag();
+                    stat!(self, exec_match_count += 1);
 
                     let mut matched = false;
                     for i in 0..n_cases {
@@ -307,10 +364,9 @@ impl<'buf> Vm<'buf> {
                             u16::from_le_bytes([code[entry + 2], code[entry + 3]]) as usize;
 
                         if case_tag == scrutinee_tag {
-                            // If the case has bindings, push the scrutinee back
-                            // so the subsequent BIND can extract fields.
                             if case_arity > 0 {
                                 self.arena.stack_push(scrutinee)?;
+                                self.record_stack();
                             }
                             pc = case_offset;
                             matched = true;
@@ -319,7 +375,7 @@ impl<'buf> Vm<'buf> {
                     }
 
                     if !matched {
-                        return Err(VmError::MatchFailure);
+                        return Err(VmError::MatchFailure { scrutinee_tag: scrutinee_tag, pc });
                     }
                 }
 
@@ -330,12 +386,12 @@ impl<'buf> Vm<'buf> {
                 op::BIND => {
                     let n = code[pc] as usize;
                     pc += 1;
-                    // Pop the scrutinee (pushed back by MATCH), push its fields.
                     let scrutinee = self.arena.stack_pop();
                     for i in 0..n {
                         let field = self.arena.tuple_field(scrutinee, i);
                         self.arena.stack_push(field)?;
                     }
+                    self.record_stack();
                 }
 
                 op::DROP => {
@@ -345,22 +401,27 @@ impl<'buf> Vm<'buf> {
                     self.arena.stack_truncate(depth - n);
                 }
 
-                op::ERROR => {
-                    return Err(VmError::MatchFailure);
+                op::SLIDE => {
+                    let n = code[pc] as usize;
+                    pc += 1;
+                    let result = self.arena.stack_pop();
+                    let depth = self.arena.stack_depth();
+                    self.arena.stack_truncate(depth - n);
+                    self.arena.stack_push(result)?;
                 }
 
-                op::LETREC_FIX => {
+                op::ERROR => {
+                    return Err(VmError::MatchFailure { scrutinee_tag: 0xFF, pc });
+                }
+
+                op::FIXPOINT => {
                     let cap_idx = code[pc] as usize;
                     pc += 1;
-                    // TOS = the closure (letrec val).
-                    // Position 1 from TOS = the dummy placeholder.
                     let closure = self.arena.stack_peek(0);
                     if cap_idx != 0xFF {
                         self.arena.closure_set_capture(closure, cap_idx, closure);
                     }
-                    // Overwrite the dummy with the closure.
                     self.arena.stack_set(1, closure);
-                    // Pop the extra copy.
                     self.arena.stack_pop();
                 }
 

@@ -140,10 +140,147 @@ pub fn resolve_program(
         resolved.push(RDefine {
             name: def.name.clone(),
             global_idx: idx,
-            body,
+            body: anf_normalize(body),
         });
     }
     Ok(resolved)
+}
+
+fn is_atomic(expr: &RExpr) -> bool {
+    matches!(expr, RExpr::Local(_) | RExpr::Global(_))
+}
+
+/// Shift all free de Bruijn indices >= cutoff by `amount`.
+fn shift(expr: &RExpr, cutoff: usize, amount: usize) -> RExpr {
+    match expr {
+        RExpr::Local(idx) => {
+            if (*idx as usize) >= cutoff {
+                RExpr::Local(*idx + amount as u8)
+            } else {
+                RExpr::Local(*idx)
+            }
+        }
+        RExpr::Global(idx) => RExpr::Global(*idx),
+        RExpr::Ctor(tag, fields) => {
+            RExpr::Ctor(*tag, fields.iter().map(|f| shift(f, cutoff, amount)).collect())
+        }
+        RExpr::Lambda(body) => RExpr::Lambda(Box::new(shift(body, cutoff + 1, amount))),
+        RExpr::App(func, arg) => RExpr::App(
+            Box::new(shift(func, cutoff, amount)),
+            Box::new(shift(arg, cutoff, amount)),
+        ),
+        RExpr::Let(val, body) => RExpr::Let(
+            Box::new(shift(val, cutoff, amount)),
+            Box::new(shift(body, cutoff + 1, amount)),
+        ),
+        RExpr::Letrec(val, body) => RExpr::Letrec(
+            Box::new(shift(val, cutoff + 1, amount)),
+            Box::new(shift(body, cutoff + 1, amount)),
+        ),
+        RExpr::Match(scrut, cases) => RExpr::Match(
+            Box::new(shift(scrut, cutoff, amount)),
+            cases
+                .iter()
+                .map(|c| RMatchCase {
+                    tag: c.tag,
+                    arity: c.arity,
+                    body: shift(&c.body, cutoff + c.arity as usize, amount),
+                })
+                .collect(),
+        ),
+        RExpr::Error => RExpr::Error,
+    }
+}
+
+/// Normalize to A-Normal Form: lift non-atomic App arguments and Ctor
+/// fields into Let bindings so the codegen never has intermediate
+/// temporaries on the stack when BIND pushes match fields.
+fn anf_normalize(expr: RExpr) -> RExpr {
+    match expr {
+        RExpr::Local(_) | RExpr::Global(_) | RExpr::Error => expr,
+
+        RExpr::Ctor(tag, fields) => {
+            let fields: Vec<RExpr> = fields.into_iter().map(anf_normalize).collect();
+            lift_ctor_fields(tag, fields)
+        }
+
+        RExpr::Lambda(body) => RExpr::Lambda(Box::new(anf_normalize(*body))),
+
+        RExpr::App(func, arg) => {
+            let func = anf_normalize(*func);
+            let arg = anf_normalize(*arg);
+            if is_atomic(&arg) {
+                RExpr::App(Box::new(func), Box::new(arg))
+            } else {
+                // Let(arg, App(shift(func,0,1), Local(0)))
+                RExpr::Let(
+                    Box::new(arg),
+                    Box::new(RExpr::App(
+                        Box::new(shift(&func, 0, 1)),
+                        Box::new(RExpr::Local(0)),
+                    )),
+                )
+            }
+        }
+
+        RExpr::Let(val, body) => RExpr::Let(
+            Box::new(anf_normalize(*val)),
+            Box::new(anf_normalize(*body)),
+        ),
+
+        RExpr::Letrec(val, body) => RExpr::Letrec(
+            Box::new(anf_normalize(*val)),
+            Box::new(anf_normalize(*body)),
+        ),
+
+        RExpr::Match(scrut, cases) => RExpr::Match(
+            Box::new(anf_normalize(*scrut)),
+            cases
+                .into_iter()
+                .map(|c| RMatchCase {
+                    tag: c.tag,
+                    arity: c.arity,
+                    body: anf_normalize(c.body),
+                })
+                .collect(),
+        ),
+    }
+}
+
+/// Lift non-atomic Ctor fields into Let bindings so the Ctor only
+/// references atomic values.
+///
+/// Non-atomic fields at indices i_0..i_{k-1} become k nested Lets
+/// (i_0 outermost). In the innermost scope the Ctor uses Local(k-1-j)
+/// for field i_j, and shifts every atomic field by k.
+fn lift_ctor_fields(tag: u8, fields: Vec<RExpr>) -> RExpr {
+    let non_atomic: Vec<usize> = (0..fields.len())
+        .filter(|i| !is_atomic(&fields[*i]))
+        .collect();
+
+    if non_atomic.is_empty() {
+        return RExpr::Ctor(tag, fields);
+    }
+
+    let k = non_atomic.len();
+
+    let mut ctor_fields = Vec::with_capacity(fields.len());
+    for (i, field) in fields.iter().enumerate() {
+        if let Some(j) = non_atomic.iter().position(|&idx| idx == i) {
+            ctor_fields.push(RExpr::Local((k - 1 - j) as u8));
+        } else {
+            ctor_fields.push(shift(field, 0, k));
+        }
+    }
+
+    let mut result = RExpr::Ctor(tag, ctor_fields);
+
+    for j in (0..k).rev() {
+        let val = shift(&fields[non_atomic[j]], 0, j);
+        result = RExpr::Let(Box::new(val), Box::new(result));
+    }
+
+    result
 }
 
 fn resolve_expr(
@@ -273,7 +410,7 @@ mod tests {
 
     #[test]
     fn resolve_full_fourchette() {
-        let src = std::fs::read_to_string("../../fourchette.scm").unwrap();
+        let src = std::fs::read_to_string("../../scheme/fourchette.scm").unwrap();
         let sexps = parse(&src).unwrap();
         let defs = desugar_program(&sexps).unwrap();
         let mut tags = TagTable::new();

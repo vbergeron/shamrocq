@@ -196,12 +196,11 @@ impl Compiler {
 
             RExpr::Let(val, body) => {
                 self.compile_expr(val, ctx, false);
-                self.emitter.emit_bind(1);
                 ctx.push_bindings(1);
                 self.compile_expr(body, ctx, tail);
                 ctx.pop_bindings(1);
                 if !tail {
-                    self.emitter.emit_drop(1);
+                    self.emitter.emit_slide(1);
                 }
             }
 
@@ -215,19 +214,19 @@ impl Compiler {
                 self.compile_expr(val, ctx, false);
 
                 // The closure is now on the stack above the dummy.
-                // LETREC_FIX patches the self-reference and replaces the dummy.
+                // FIXPOINT patches the self-reference and replaces the dummy.
                 let fix_slot = self
                     .last_closure_captures
                     .as_ref()
                     .and_then(|caps| caps.iter().position(|&x| x == 0))
                     .map(|s| s as u8)
                     .unwrap_or(0xFF);
-                self.emitter.emit_letrec_fix(fix_slot);
+                self.emitter.emit_fixpoint(fix_slot);
 
                 self.compile_expr(body, ctx, tail);
                 ctx.pop_bindings(1);
                 if !tail {
-                    self.emitter.emit_drop(1);
+                    self.emitter.emit_slide(1);
                 }
             }
 
@@ -284,7 +283,7 @@ impl Compiler {
             if case.arity > 0 {
                 ctx.pop_bindings(case.arity as usize);
                 if !tail {
-                    self.emitter.emit_drop(case.arity);
+                    self.emitter.emit_slide(case.arity);
                 }
             }
 
@@ -410,7 +409,7 @@ mod tests {
 
     #[test]
     fn compile_full_fourchette() {
-        let src = std::fs::read_to_string("../../fourchette.scm").unwrap();
+        let src = std::fs::read_to_string("../../scheme/fourchette.scm").unwrap();
         let prog = compile(&src);
         assert!(prog.header.n_globals > 20);
         assert!(prog.code.len() > 100);
