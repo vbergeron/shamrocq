@@ -174,15 +174,19 @@ impl<'buf> Vm<'buf> {
 
     pub fn apply(&mut self, mut func: Value, args: &[Value]) -> Result<Value, VmError> {
         for &arg in args {
-            if !func.is_closure() {
+            if !func.is_callable() {
                 return Err(VmError::NotAClosure);
             }
-            let code_addr = self.arena.closure_code(func);
-            let n_cap = self.arena.closure_capture_count(func);
             let saved_depth = self.arena.stack_depth();
-            for i in 0..n_cap {
-                self.arena.stack_push(self.arena.closure_capture(func, i))?;
-            }
+            let code_addr = if func.is_bare_fn() {
+                func.code_addr()
+            } else {
+                let n_cap = self.arena.closure_capture_count(func);
+                for i in 0..n_cap {
+                    self.arena.stack_push(self.arena.closure_capture(func, i))?;
+                }
+                self.arena.closure_code(func)
+            };
             self.arena.stack_push(arg)?;
             func = self.eval_with_frame(code_addr as usize, saved_depth)?;
         }
@@ -269,18 +273,23 @@ impl<'buf> Vm<'buf> {
                     let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
                     let n_cap = code[pc + 2] as usize;
                     pc += 3;
-                    let val = self.arena.alloc_closure_from_stack(code_addr, n_cap)?;
-                    stat!(self, alloc_count_closure += 1);
-                    stat!(self, alloc_bytes_total += ((1 + n_cap) * 4) as u32);
-                    self.record_heap();
-                    self.arena.stack_push(val)?;
-                    self.record_stack();
+                    if n_cap == 0 {
+                        self.arena.stack_push(Value::bare_fn(code_addr))?;
+                        self.record_stack();
+                    } else {
+                        let val = self.arena.alloc_closure_from_stack(code_addr, n_cap)?;
+                        stat!(self, alloc_count_closure += 1);
+                        stat!(self, alloc_bytes_total += ((1 + n_cap) * 4) as u32);
+                        self.record_heap();
+                        self.arena.stack_push(val)?;
+                        self.record_stack();
+                    }
                 }
 
                 op::APPLY => {
                     let arg = self.arena.stack_pop();
                     let func = self.arena.stack_pop();
-                    if !func.is_closure() {
+                    if !func.is_callable() {
                         return Err(VmError::NotAClosure);
                     }
                     if call_depth >= MAX_CALL_DEPTH {
@@ -294,12 +303,16 @@ impl<'buf> Vm<'buf> {
                     stat!(self, exec_apply_count += 1);
                     stat!(self, exec_peak_call_depth = max call_depth as u32);
 
-                    let ca = self.arena.closure_code(func);
-                    let n_cap = self.arena.closure_capture_count(func);
                     frame_base = self.arena.stack_depth();
-                    for i in 0..n_cap {
-                        self.arena.stack_push(self.arena.closure_capture(func, i))?;
-                    }
+                    let ca = if func.is_bare_fn() {
+                        func.code_addr()
+                    } else {
+                        let n_cap = self.arena.closure_capture_count(func);
+                        for i in 0..n_cap {
+                            self.arena.stack_push(self.arena.closure_capture(func, i))?;
+                        }
+                        self.arena.closure_code(func)
+                    };
                     self.arena.stack_push(arg)?;
                     self.record_stack();
                     pc = ca as usize;
@@ -308,18 +321,22 @@ impl<'buf> Vm<'buf> {
                 op::TAIL_APPLY => {
                     let arg = self.arena.stack_pop();
                     let func = self.arena.stack_pop();
-                    if !func.is_closure() {
+                    if !func.is_callable() {
                         return Err(VmError::NotAClosure);
                     }
                     self.arena.stack_truncate(frame_base);
                     stat!(self, exec_tail_apply_count += 1);
 
-                    let ca = self.arena.closure_code(func);
-                    let n_cap = self.arena.closure_capture_count(func);
                     frame_base = self.arena.stack_depth();
-                    for i in 0..n_cap {
-                        self.arena.stack_push(self.arena.closure_capture(func, i))?;
-                    }
+                    let ca = if func.is_bare_fn() {
+                        func.code_addr()
+                    } else {
+                        let n_cap = self.arena.closure_capture_count(func);
+                        for i in 0..n_cap {
+                            self.arena.stack_push(self.arena.closure_capture(func, i))?;
+                        }
+                        self.arena.closure_code(func)
+                    };
                     self.arena.stack_push(arg)?;
                     self.record_stack();
                     pc = ca as usize;
