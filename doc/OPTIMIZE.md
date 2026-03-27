@@ -29,7 +29,7 @@ Every value is a 32-bit tagged word:
 | `00` — Immediate | 6-bit tag, 24-bit unused | 0 |
 | `01` — Tuple | 6-bit tag, 24-bit heap offset | `arity × 4` B |
 | `10` — Closure | 30-bit heap offset | `(1 + n_captures) × 4` B |
-| `11` — *(unused)* | — | — |
+| `11` — Bare fn | 16-bit code address | 0 |
 
 Tuples store no header on the heap — the tag and arity come from the
 bytecode / the `Value` word itself.  Closures store a 4-byte header
@@ -110,40 +110,61 @@ computation stays on the heap forever, even after becoming unreachable.
 
 ## Optimization opportunities
 
+### Implemented
+
+#### ~~1. Zero-capture closures as bare function pointers~~ ✓
+
+Kind `0b11` encodes a bare function pointer: the code address is stored
+directly in the `Value` word with no heap allocation.  The existing `CLOSURE`
+bytecode with `n_captures=0` produces a bare-fn value at runtime — no
+compiler changes were needed.
+
+Measured impact (before → after):
+
+| Test | Heap before | Heap after | Savings |
+|------|-------------|------------|---------|
+| `load_program` | 260 B | 8 B | 97% |
+| `negb(true)` | 260 B | 8 B | 97% |
+| `compose(negb,negb)` | 276 B | 28 B | 90% |
+| `tree_insert_and_member` | 1 072 B | 820 B | 23% |
+| `tree_to_list_sorted` | 1 124 B | 872 B | 22% |
+| `hforest_merge_basic` | 1 748 B | 1 500 B | 14% |
+| `hforest_lifecycle` | 6 576 B | 6 328 B | 4% |
+
+Biggest win is at program load (63 zero-capture globals) and for simple
+function calls.  Heavier workloads see 14–23% reduction from zero-capture
+closures created during partial application.
+
+### Rejected
+
+#### ~~Arena watermarking / checkpoint-reset~~
+
+Watermarking (save `heap_top`, reset after a call) was investigated and
+rejected.  The simple case — result is immediate, just reset — only helps
+trivial boolean predicates.  The heavy workloads (map, merge, forest
+operations) all return heap-allocated structures, requiring full relocation.
+
+Relocation is blocked by a structural issue: **tuples have no heap header**.
+A tuple on the heap is just its fields — no length word, no tag.  The arity
+was known at compile time from the `TUPLE tag arity` bytecode operand but is
+not stored anywhere at runtime.  This means:
+
+- **Can't determine tuple size** from a heap offset alone — needed to copy it.
+- **Can't place forwarding pointers** — no header word to overwrite, so shared
+  references would be duplicated (increasing memory) or require an external
+  side table.
+- **Self-referential closures** (`FIXPOINT`) create cycles that require
+  forwarding pointers to handle correctly.
+
+Fixing this would require adding a header word to every tuple (+4 B each),
+building a compile-time tag→arity table, or encoding arity in the Value word.
+Each option partially negates the savings and constitutes a significant design
+change.  Furthermore, watermarking only works at `vm.call()` boundaries —
+internal recursion garbage within a single call is not reclaimable.
+
 ### Tier 1 — high impact
 
-#### 1. Zero-capture closures as immediates
-
-A zero-capture closure currently costs a 4-byte header word on the heap.
-Since `code_addr` is `u16` (16 bits) and kind `0b11` is unused, zero-capture
-closures can be encoded as an immediate-like value with no heap allocation:
-
-```
-0b11_cccccccccccccccc_00000000000000   bare function pointer (code_addr)
-```
-
-At program load, 63 out of 64 globals are closures — most zero-capture.
-In `hforest_lifecycle` (664 closures), a significant fraction are zero-capture
-intermediates.  Estimated savings: ~30–50% of closure allocations eliminated.
-
-Requires: value representation change, VM APPLY adjustment.
-
-#### 2. Arena watermarking / checkpoint-reset
-
-Save `heap_top` before a call.  After the call:
-
-- If the result is immediate → reset `heap_top` to the watermark, reclaiming
-  all intermediate allocations for free.
-- If the result references the heap → walk the result tree, compact it to the
-  watermark region, then reset.  This is FemtoLisp's semispace idea applied at
-  call boundaries rather than globally.
-
-Estimated savings: **30–70% of heap** depending on workload, since most
-intermediate closures and tuples become dead after the call returns.
-
-Requires: arena `set_heap_top`, result-reachability walk for heap results.
-
-#### 3. Uncurried / multi-argument closures
+#### 1. Uncurried / multi-argument closures
 
 The most structurally impactful change.  Currently
 `(lambdas (a b c) body)` → `Lambda(a, Lambda(b, Lambda(c, body)))`.  Calling
@@ -169,7 +190,7 @@ Estimated savings: 50–70% of closure allocations for curried code.
 Requires: desugar, codegen, and VM changes (new opcodes `CLOSURE` with arity,
 `APPLY_N`).
 
-#### 4. Shared closure environments (FemtoLisp-style)
+#### 2. Shared closure environments (FemtoLisp-style)
 
 When sibling closures from the same scope capture the same variables, each
 independently copies all captures:
@@ -188,7 +209,7 @@ env-pointer dereference.
 
 ### Tier 2 — medium impact
 
-#### 5. Inline unary constructors
+#### 3. Inline unary constructors
 
 `S(n)` costs 4 bytes on the heap for one field.  When the field is itself an
 immediate (like `S(O)`), the entire value fits in 32 bits with no heap
@@ -205,7 +226,7 @@ Makes Peano numbers up to ~depth 23 free (no heap), and `Some(x)`, `Left(x)`,
 
 Requires: value encoding change, VM BIND/tuple_field adjustment.
 
-#### 6. `GLOBAL_CALL` — avoid materializing closures for known targets
+#### 4. `GLOBAL_CALL` — avoid materializing closures for known targets
 
 Many call patterns are `GLOBAL idx; LOAD arg; APPLY`.  A combined
 `GLOBAL_CALL idx` opcode could jump directly to the global's code without
@@ -214,7 +235,7 @@ traffic and avoids intermediate closure manipulation.
 
 Requires: new opcode, codegen pattern detection.
 
-#### 7. In-arena call frames (FemtoLisp-style)
+#### 5. In-arena call frames (FemtoLisp-style)
 
 The `[CallFrame; 256]` array is 2 KB on Cortex-M4.  Pushing `return_pc` and
 `frame_base` as raw `u32` values onto the arena stack instead would:
@@ -227,20 +248,20 @@ Requires: VM refactor of call/return paths.
 
 ### Tier 3 — lower impact / exploratory
 
-#### 8. Lambda lifting (compiler pass)
+#### 6. Lambda lifting (compiler pass)
 
 Lift lambdas with few free variables to top-level functions with extra
 parameters.  The caller passes captures as arguments.  Trades heap allocation
 (permanent in bump model) for stack space (temporary) — almost always
 favorable given bump-only allocation.
 
-#### 9. Stack-allocated temporary tuples
+#### 7. Stack-allocated temporary tuples
 
 Tuples that are immediately destructured by `MATCH`/`BIND` and never escape
 could stay on the stack instead of the heap.  Requires escape analysis in the
 compiler.
 
-#### 10. Word-granularity heap offsets
+#### 8. Word-granularity heap offsets
 
 All allocations are 4-byte aligned, but offsets are byte-addressed.  Storing
 `offset / 4` doubles the effective range.  For a 64 KB buffer, 14 bits
@@ -252,12 +273,12 @@ suffice, freeing bits for inline payloads (supports technique 5).
 
 | Priority | Technique | Complexity | Estimated savings |
 |----------|-----------|------------|-------------------|
-| 1 | Zero-capture closures as immediates | Low | ~30–50% fewer closure allocs |
-| 2 | Arena watermarking | Medium | ~30–70% heap reclaimed |
-| 3 | Uncurried calling convention | High | ~50–70% fewer closure allocs |
-| 4 | Inline unary constructors | Medium | Significant for Peano-heavy code |
-| 5 | Shared environments | Medium | Good for HOF-heavy code |
+| ~~done~~ | ~~Zero-capture closures as bare fns~~ | ~~Low~~ | ~~97% load, 14–23% heavy~~ |
+| 1 | Uncurried calling convention | High | ~50–70% fewer closure allocs |
+| 2 | Inline unary constructors | Medium | Significant for Peano-heavy code |
+| 3 | Shared environments | Medium | Good for HOF-heavy code |
 
-The first two are independent and can be implemented incrementally.  The third
-addresses the root cause of closure proliferation but requires changes across
-the entire compiler pipeline and VM instruction set.
+The uncurried calling convention addresses the root cause of closure
+proliferation but requires changes across the entire compiler pipeline and
+VM instruction set.  Inline unary constructors and shared environments are
+independent medium-complexity changes that can be done in any order.
