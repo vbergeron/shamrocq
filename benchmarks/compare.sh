@@ -52,8 +52,8 @@ else
       sum(peak_heap_bytes) AS Σheap,
       sum(peak_stack_bytes) AS Σstack,
       sum(alloc_bytes_total) AS Σalloc,
-      sum(exec_apply_count) AS Σapply,
-      sum(exec_tail_apply_count) AS Σtail,
+      sum(exec_call_count) AS Σcall,
+      sum(exec_tail_call_count) AS Σtail,
       sum(exec_match_count) AS Σmatch
     FROM data
     GROUP BY commit

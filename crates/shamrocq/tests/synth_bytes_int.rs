@@ -1,6 +1,6 @@
 mod common;
 
-use common::compile_scheme;
+use common::{compile_scheme, print_stats};
 use shamrocq::{Program, Vm};
 
 fn setup_bytes() -> common::Compiled {
@@ -46,6 +46,7 @@ fn str_len_basic() {
     let hello = vm.global_value(c.funcs["str_hello"]);
     let result = vm.call(c.funcs["str_len"], &[hello]).unwrap();
     assert_eq!(result.integer_value(), 5);
+    print_stats("str_len(hello)", &vm);
 }
 
 #[test]
@@ -59,6 +60,7 @@ fn str_first_byte() {
     let hello = vm.global_value(c.funcs["str_hello"]);
     let result = vm.call(c.funcs["str_first"], &[hello]).unwrap();
     assert_eq!(result.integer_value(), b'h' as i32);
+    print_stats("str_first(hello)", &vm);
 }
 
 #[test]
@@ -74,6 +76,7 @@ fn str_eq_same() {
     let result = vm.call(c.funcs["str_eq"], &[hello, hello2]).unwrap();
     assert!(result.is_ctor());
     assert_eq!(result.tag(), 0); // TRUE
+    print_stats("str_eq(hello,hello)", &vm);
 }
 
 #[test]
@@ -104,6 +107,7 @@ fn str_cat_basic() {
     let result = vm.call(c.funcs["str_cat"], &[a, b]).unwrap();
     assert!(result.is_bytes());
     assert_eq!(vm.arena.bytes_data(result), b"foobar");
+    print_stats("str_cat(foo,bar)", &vm);
 }
 
 #[test]
@@ -118,6 +122,7 @@ fn str_starts_with_h_true() {
     let result = vm.call(c.funcs["str_starts_with_h"], &[hello]).unwrap();
     assert!(result.is_ctor());
     assert_eq!(result.tag(), 0); // TRUE
+    print_stats("str_starts_with_h(hello)", &vm);
 }
 
 #[test]

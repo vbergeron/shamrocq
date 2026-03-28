@@ -9,8 +9,8 @@ pub mod op {
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
-    pub const APPLY: u8 = 0x06;
-    pub const TAIL_APPLY: u8 = 0x07;
+    pub const CALL: u8 = 0x06;
+    pub const TAIL_CALL: u8 = 0x07;
     pub const RET: u8 = 0x08;
     pub const MATCH: u8 = 0x09;
     pub const JMP: u8 = 0x0A;
@@ -32,6 +32,8 @@ pub mod op {
     pub const BYTES_GET: u8 = 0x1A;
     pub const BYTES_EQ: u8 = 0x1B;
     pub const BYTES_CONCAT: u8 = 0x1C;
+    pub const CALL_DIRECT: u8 = 0x1D;
+    pub const TAIL_CALL_DIRECT: u8 = 0x1E;
 }
 
 /// Binary encoding helpers used by the compiler to emit bytecode,
@@ -43,14 +45,16 @@ pub mod op {
 ///   LOAD      idx:u8
 ///   GLOBAL    idx:u16le
 ///   CLOSURE   code_addr:u16le  n_captures:u8
-///   APPLY
-///   TAIL_APPLY
+///   CALL
+///   TAIL_CALL
 ///   RET
 ///   MATCH     n_cases:u8  [tag:u8 arity:u8 offset:u16le]*n
 ///   JMP       offset:u16le
 ///   BIND      n:u8
 ///   DROP      n:u8
 ///   ERROR
+///   CALL_DIRECT       code_addr:u16le  n_args:u8
+///   TAIL_CALL_DIRECT  code_addr:u16le  n_args:u8
 
 pub struct Emitter {
     pub code: Vec<u8>,
@@ -92,12 +96,12 @@ impl Emitter {
         self.code.push(n_captures);
     }
 
-    pub fn emit_apply(&mut self) {
-        self.code.push(op::APPLY);
+    pub fn emit_call(&mut self) {
+        self.code.push(op::CALL);
     }
 
-    pub fn emit_tail_apply(&mut self) {
-        self.code.push(op::TAIL_APPLY);
+    pub fn emit_tail_call(&mut self) {
+        self.code.push(op::TAIL_CALL);
     }
 
     pub fn emit_ret(&mut self) {
@@ -190,6 +194,18 @@ impl Emitter {
     pub fn emit_bytes_get(&mut self)    { self.code.push(op::BYTES_GET); }
     pub fn emit_bytes_eq(&mut self)     { self.code.push(op::BYTES_EQ); }
     pub fn emit_bytes_concat(&mut self) { self.code.push(op::BYTES_CONCAT); }
+
+    pub fn emit_call_direct(&mut self, code_addr: u16, n_args: u8) {
+        self.code.push(op::CALL_DIRECT);
+        self.code.extend_from_slice(&code_addr.to_le_bytes());
+        self.code.push(n_args);
+    }
+
+    pub fn emit_tail_call_direct(&mut self, code_addr: u16, n_args: u8) {
+        self.code.push(op::TAIL_CALL_DIRECT);
+        self.code.extend_from_slice(&code_addr.to_le_bytes());
+        self.code.push(n_args);
+    }
 }
 
 /// Header prepended to the compiled bytecode blob.

@@ -11,8 +11,8 @@ mod op {
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
-    pub const APPLY: u8 = 0x06;
-    pub const TAIL_APPLY: u8 = 0x07;
+    pub const CALL: u8 = 0x06;
+    pub const TAIL_CALL: u8 = 0x07;
     pub const RET: u8 = 0x08;
     pub const MATCH: u8 = 0x09;
     pub const JMP: u8 = 0x0A;
@@ -34,6 +34,8 @@ mod op {
     pub const BYTES_GET: u8 = 0x1A;
     pub const BYTES_EQ: u8 = 0x1B;
     pub const BYTES_CONCAT: u8 = 0x1C;
+    pub const CALL_DIRECT: u8 = 0x1D;
+    pub const TAIL_CALL_DIRECT: u8 = 0x1E;
 }
 
 #[derive(Debug)]
@@ -297,7 +299,7 @@ impl<'buf> Vm<'buf> {
                     }
                 }
 
-                op::APPLY => {
+                op::CALL => {
                     let arg = self.arena.stack_pop();
                     let func = self.arena.stack_pop();
                     if !func.is_callable() {
@@ -311,7 +313,7 @@ impl<'buf> Vm<'buf> {
                         frame_base,
                     };
                     call_depth += 1;
-                    stat!(self, exec_apply_count += 1);
+                    stat!(self, exec_call_count += 1);
                     stat!(self, exec_peak_call_depth = max call_depth as u32);
 
                     frame_base = self.arena.stack_depth();
@@ -329,14 +331,14 @@ impl<'buf> Vm<'buf> {
                     pc = ca as usize;
                 }
 
-                op::TAIL_APPLY => {
+                op::TAIL_CALL => {
                     let arg = self.arena.stack_pop();
                     let func = self.arena.stack_pop();
                     if !func.is_callable() {
                         return Err(VmError::NotAClosure);
                     }
                     self.arena.stack_truncate(frame_base);
-                    stat!(self, exec_tail_apply_count += 1);
+                    stat!(self, exec_tail_call_count += 1);
 
                     frame_base = self.arena.stack_depth();
                     let ca = if func.is_bare_fn() {
@@ -545,6 +547,42 @@ impl<'buf> Vm<'buf> {
                     self.record_heap();
                     self.arena.stack_push(val)?;
                     self.record_stack();
+                }
+
+                op::CALL_DIRECT => {
+                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
+                    let n_args = code[pc + 2] as usize;
+                    pc += 3;
+                    if call_depth >= MAX_CALL_DEPTH {
+                        return Err(VmError::StackOverflow);
+                    }
+                    self.call_stack[call_depth] = CallFrame {
+                        return_pc: pc,
+                        frame_base,
+                    };
+                    call_depth += 1;
+                    stat!(self, exec_direct_call_count += 1);
+                    stat!(self, exec_peak_call_depth = max call_depth as u32);
+                    frame_base = self.arena.stack_depth() - n_args;
+                    pc = code_addr as usize;
+                }
+
+                op::TAIL_CALL_DIRECT => {
+                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
+                    let n_args = code[pc + 2] as usize;
+                    pc += 3;
+                    stat!(self, exec_tail_direct_call_count += 1);
+                    let mut args_buf: [Value; 16] = [Value::ctor(0, 0); 16];
+                    for i in (0..n_args).rev() {
+                        args_buf[i] = self.arena.stack_pop();
+                    }
+                    self.arena.stack_truncate(frame_base);
+                    for i in 0..n_args {
+                        self.arena.stack_push(args_buf[i])?;
+                    }
+                    self.record_stack();
+                    frame_base = self.arena.stack_depth() - n_args;
+                    pc = code_addr as usize;
                 }
 
                 _ => return Err(VmError::InvalidBytecode),

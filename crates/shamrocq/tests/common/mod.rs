@@ -60,15 +60,19 @@ pub fn print_stats(name: &str, vm: &Vm) {
                 "{{\"timestamp\":\"{ts}\",\"commit\":\"{co}\",\"test\":\"{nm}\",",
                 "\"peak_heap_bytes\":{ph},\"peak_stack_bytes\":{ps},",
                 "\"alloc_count_ctor\":{at},\"alloc_count_closure\":{ac},\"alloc_bytes_total\":{ab},",
-                "\"exec_instruction_count\":{ei},\"exec_apply_count\":{ea},",
-                "\"exec_tail_apply_count\":{et},\"exec_match_count\":{em},\"exec_peak_call_depth\":{ed},",
+                "\"exec_instruction_count\":{ei},\"exec_call_count\":{ea},",
+                "\"exec_tail_call_count\":{et},",
+                "\"exec_direct_call_count\":{edc},\"exec_tail_direct_call_count\":{etdc},",
+                "\"exec_match_count\":{em},\"exec_peak_call_depth\":{ed},",
                 "\"final_heap_bytes\":{fh},\"final_stack_bytes\":{fs},\"final_free_bytes\":{ff}}}"
             ),
             ts = timestamp, co = commit, nm = name,
             ph = s.peak_heap_bytes, ps = s.peak_stack_bytes,
             at = s.alloc_count_ctor, ac = s.alloc_count_closure, ab = s.alloc_bytes_total,
-            ei = s.exec_instruction_count, ea = s.exec_apply_count,
-            et = s.exec_tail_apply_count, em = s.exec_match_count, ed = s.exec_peak_call_depth,
+            ei = s.exec_instruction_count, ea = s.exec_call_count,
+            et = s.exec_tail_call_count,
+            edc = s.exec_direct_call_count, etdc = s.exec_tail_direct_call_count,
+            em = s.exec_match_count, ed = s.exec_peak_call_depth,
             fh = snap.heap_bytes, fs = snap.stack_bytes, ff = snap.free_bytes,
         );
         if let Ok(mut file) = std::fs::OpenOptions::new().append(true).create(true).open(&path) {
