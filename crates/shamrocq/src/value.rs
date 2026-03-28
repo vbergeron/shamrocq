@@ -1,32 +1,31 @@
-const KIND_CTOR: u32 = 0b01 << 30;
-const KIND_INTEGER: u32 = 0b10 << 30;
+const KIND_CTOR: u32 = 0b000 << 29;
+const KIND_INTEGER: u32 = 0b001 << 29;
 const KIND_CLOSURE: u32 = 0b110 << 29;
 const KIND_BARE_FN: u32 = 0b111 << 29;
 
-const TAG_SHIFT: u32 = 24;
-const TAG_MASK: u32 = 0x3F;
-const CTOR_PAYLOAD_MASK: u32 = 0x00FF_FFFF;
-const INTEGER_MASK: u32 = 0x3FFF_FFFF;
-const CALLABLE_MASK: u32 = 0xC000_0000;
-const CALLABLE_BITS: u32 = 0xC000_0000;
-const CALLABLE_PAYLOAD: u32 = 0x1FFF_FFFF;
-const KIND3_MASK: u32 = 0xE000_0000;
+const KIND_MASK: u32 = 0b111 << 29;
+const CALLABLE_MASK: u32 = 0b11 << 30;
+const CALLABLE_BITS: u32 = 0b11 << 30;
+const TAG_SHIFT: u32 = 21;
+const TAG_MASK: u32 = 0xFF;
+const PAYLOAD_21: u32 = 0x001F_FFFF;
+const PAYLOAD_29: u32 = 0x1FFF_FFFF;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Value(u32);
 
 impl Value {
-    pub const fn ctor(tag: u8, offset: usize) -> Self {
-        Value(KIND_CTOR | ((tag as u32) << TAG_SHIFT) | (offset as u32))
+    pub const fn ctor(tag: u8, byte_offset: usize) -> Self {
+        Value(KIND_CTOR | ((tag as u32) << TAG_SHIFT) | ((byte_offset >> 2) as u32))
     }
 
     pub const fn integer(n: i32) -> Self {
-        Value(KIND_INTEGER | ((n as u32) & INTEGER_MASK))
+        Value(KIND_INTEGER | ((n as u32) & PAYLOAD_29))
     }
 
-    pub const fn closure(offset: usize) -> Self {
-        Value(KIND_CLOSURE | (offset as u32))
+    pub const fn closure(byte_offset: usize) -> Self {
+        Value(KIND_CLOSURE | ((byte_offset >> 2) as u32))
     }
 
     pub const fn bare_fn(code_addr: u16) -> Self {
@@ -38,35 +37,35 @@ impl Value {
     }
 
     pub const fn offset(self) -> usize {
-        (self.0 & CTOR_PAYLOAD_MASK) as usize
+        ((self.0 & PAYLOAD_21) as usize) << 2
     }
 
     pub const fn closure_offset(self) -> usize {
-        (self.0 & CALLABLE_PAYLOAD) as usize
+        ((self.0 & PAYLOAD_21) as usize) << 2
     }
 
     pub const fn code_addr(self) -> u16 {
-        (self.0 & CALLABLE_PAYLOAD) as u16
+        (self.0 & PAYLOAD_21) as u16
     }
 
     pub const fn integer_value(self) -> i32 {
-        ((self.0 << 2) as i32) >> 2
+        ((self.0 << 3) as i32) >> 3
     }
 
     pub const fn is_ctor(self) -> bool {
-        self.0 & CALLABLE_MASK == KIND_CTOR
+        self.0 & KIND_MASK == KIND_CTOR
     }
 
     pub const fn is_integer(self) -> bool {
-        self.0 & CALLABLE_MASK == KIND_INTEGER
+        self.0 & KIND_MASK == KIND_INTEGER
     }
 
     pub const fn is_closure(self) -> bool {
-        self.0 & KIND3_MASK == KIND_CLOSURE
+        self.0 & KIND_MASK == KIND_CLOSURE
     }
 
     pub const fn is_bare_fn(self) -> bool {
-        self.0 & KIND3_MASK == KIND_BARE_FN
+        self.0 & KIND_MASK == KIND_BARE_FN
     }
 
     pub const fn is_callable(self) -> bool {

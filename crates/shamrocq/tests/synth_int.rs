@@ -17,7 +17,7 @@ fn setup_int() -> Compiled {
 
 #[test]
 fn value_integer_roundtrip() {
-    for &n in &[0, 1, -1, 42, -42, 1000, -1000, 0x1FFF_FFFF, -0x2000_0000] {
+    for &n in &[0, 1, -1, 42, -42, 1000, -1000, 0x0FFF_FFFF, -0x1000_0000] {
         let v = Value::integer(n);
         assert!(v.is_integer());
         assert!(!v.is_ctor());
