@@ -72,7 +72,10 @@ pub fn print_stats(name: &str, vm: &Vm) {
             fh = snap.heap_bytes, fs = snap.stack_bytes, ff = snap.free_bytes,
         );
         if let Ok(mut file) = std::fs::OpenOptions::new().append(true).create(true).open(&path) {
+            use std::os::unix::io::AsRawFd;
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX); }
             let _ = writeln!(file, "{line}");
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN); }
         }
     }
 }
