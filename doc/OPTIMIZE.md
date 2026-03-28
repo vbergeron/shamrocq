@@ -15,44 +15,52 @@ The VM operates in a single caller-provided buffer (target: 30–64 KB):
 └──────────────────────────────────────────────┘
 ```
 
-- **Heap**: tuples and closures, bump-allocated, never freed.
+- **Heap**: constructors, closures, and heap-backed byte-string payloads,
+  bump-allocated, never freed.
 - **Stack**: operand stack for the bytecode interpreter.
 - **Globals**: `[Value; 64]` — 256 B, fixed, on the Rust stack.
 - **Call stack**: `[CallFrame; 256]` — 2 KB on Cortex-M4, on the Rust stack.
 
 ### Value representation
 
-Every value is a 32-bit tagged word:
+Every value is a 32-bit tagged word.  The high **3-bit kind** (bits 31–29)
+selects the layout; the remaining bits are payload (tag extensions, offsets, or
+inline data):
 
-| Kind (bits 31–30) | Layout | Heap cost |
+| Kind (bits 31–29) | Layout | Heap cost |
 |--------------------|--------|-----------|
-| `00` — Immediate | 6-bit tag, 24-bit unused | 0 |
-| `01` — Tuple | 6-bit tag, 24-bit heap offset | `arity × 4` B |
-| `10` — Closure | 30-bit heap offset | `(1 + n_captures) × 4` B |
-| `11` — Bare fn | 16-bit code address | 0 |
+| `000` — Ctor | 8-bit tag, 21-bit word offset | `arity × 4` B (0 for nullary) |
+| `001` — Integer | 29-bit signed value (tag extends payload) | 0 |
+| `010` — Bytes | 8-bit length, 21-bit word offset | `ceil(len/4) × 4` B |
+| `110` — Closure | 21-bit word offset | `(1 + n_captures) × 4` B |
+| `111` — Bare fn | code address in payload | 0 |
 
-Tuples store no header on the heap — the tag and arity come from the
+Ctors store no header on the heap — the tag and arity come from the
 bytecode / the `Value` word itself.  Closures store a 4-byte header
 (`code_addr:u16 | n_captures:u16`) followed by capture values.
 
 ### Where memory goes
 
-Stats from the integration tests reveal that **closures dominate the heap**:
+Stats from the integration tests reveal that **closures dominate the heap**.
+Small integers and short byte strings are represented **without** heap
+allocation (immediate `Integer` and inline or short `Bytes` encodings); the
+table below counts **heap-backed** constructors and closures only.
 
-| Test | Tuples | Closures | Total heap |
-|------|--------|----------|------------|
-| `load_program` | 2 | 63 | 260 B |
-| `hforest_merge_basic` | 26 | 193 | 1 748 B |
-| `hforest_lifecycle` | 92 | 664 | 6 576 B |
-| `tree_to_list_sorted` | 32 | 125 | 1 044 B |
+| Test | Ctors | Closures | Total heap |
+|------|-------|----------|------------|
+| `hforest_lifecycle` | 92 | 215 | 2 952 B |
+| `hforest_merge_basic` | 26 | 54 | 800 B |
+| `tree_to_list_sorted` | 32 | 25 | 552 B |
 
-The closure-to-tuple ratio is 3:1 to 8:1.  This is a direct consequence of
-the fully-curried calling convention: `(lambdas (a b c) body)` desugars into
+The closure-to-ctor ratio is still driven by the fully-curried calling
+convention where it applies: `(lambdas (a b c) body)` desugars into
 `Lambda(Lambda(Lambda(body)))`, and each partial application allocates a new
-closure with its own copy of captures.
+closure with its own copy of captures.  **Known-arity direct calls** (see
+Implemented) bypass that path for many global multi-argument calls.
 
-The heap is bump-only — every intermediate closure and tuple produced during
-computation stays on the heap forever, even after becoming unreachable.
+The heap is bump-only — every intermediate closure and constructor cell
+produced during computation stays on the heap forever, even after becoming
+unreachable.
 
 ---
 
@@ -135,6 +143,34 @@ Biggest win is at program load (63 zero-capture globals) and for simple
 function calls.  Heavier workloads see 14–23% reduction from zero-capture
 closures created during partial application.
 
+#### ~~2. Uncurried / multi-argument closures (known-arity direct calls)~~ ✓
+
+Implemented as **known-arity direct calls**: the compiler detects fully applied
+calls to known multi-arity globals and emits `CALL_DIRECT` / `TAIL_CALL_DIRECT`
+into a **flat** code body, bypassing intermediate closure creation and the
+curried apply chain for those sites.
+
+Measured impact:
+
+| Signal | Result |
+|--------|--------|
+| `hforest_lifecycle` | 24% fewer instructions, 63% fewer closures |
+| `int_gcd`, `int_pow` | 70–83% fewer closures |
+
+#### ~~3. Word-granularity heap offsets~~ ✓
+
+The value refactor stores **word indices** (`byte offset / 4`) in the 21-bit
+heap payload.  With word addressing, 21 bits cover **8 MB** of heap — ample
+for the embedded target — and frees encoding space compared to byte offsets
+within the same word layout.
+
+#### `GLOBAL_CALL` — subsumed
+
+The Tier 2 idea “`GLOBAL_CALL` — avoid materializing closures for known
+targets” is **subsumed** by `CALL_DIRECT` / `TAIL_CALL_DIRECT`: direct calls
+already jump to the global’s flat body without pushing and re-reading a
+closure for those patterns.  A separate `GLOBAL_CALL` opcode is unnecessary.
+
 ### Rejected
 
 #### ~~Arena watermarking / checkpoint-reset~~
@@ -144,19 +180,19 @@ rejected.  The simple case — result is immediate, just reset — only helps
 trivial boolean predicates.  The heavy workloads (map, merge, forest
 operations) all return heap-allocated structures, requiring full relocation.
 
-Relocation is blocked by a structural issue: **tuples have no heap header**.
-A tuple on the heap is just its fields — no length word, no tag.  The arity
+Relocation is blocked by a structural issue: **constructors have no heap header**.
+A constructor cell on the heap is just its fields — no length word, no tag.  The arity
 was known at compile time from the `TUPLE tag arity` bytecode operand but is
 not stored anywhere at runtime.  This means:
 
-- **Can't determine tuple size** from a heap offset alone — needed to copy it.
+- **Can't determine ctor size** from a heap offset alone — needed to copy it.
 - **Can't place forwarding pointers** — no header word to overwrite, so shared
   references would be duplicated (increasing memory) or require an external
   side table.
 - **Self-referential closures** (`FIXPOINT`) create cycles that require
   forwarding pointers to handle correctly.
 
-Fixing this would require adding a header word to every tuple (+4 B each),
+Fixing this would require adding a header word to every ctor (+4 B each),
 building a compile-time tag→arity table, or encoding arity in the Value word.
 Each option partially negates the savings and constitutes a significant design
 change.  Furthermore, watermarking only works at `vm.call()` boundaries —
@@ -164,33 +200,7 @@ internal recursion garbage within a single call is not reclaimable.
 
 ### Tier 1 — high impact
 
-#### 1. Uncurried / multi-argument closures
-
-The most structurally impactful change.  Currently
-`(lambdas (a b c) body)` → `Lambda(a, Lambda(b, Lambda(c, body)))`.  Calling
-with 3 args produces 2 intermediate closures that are immediately consumed:
-
-```
-Closure(Lambda(b, Lambda(c, body)), captures=[a])   → 2 words
-Closure(Lambda(c, body), captures=[a, b])            → 3 words
-                                                total: 5 words wasted
-```
-
-With multi-argument closures:
-
-```
-CLOSURE code_addr n_captures arity
-APPLY_N arity
-```
-
-A 3-argument function is a single closure.  No intermediate closures.
-
-Estimated savings: 50–70% of closure allocations for curried code.
-
-Requires: desugar, codegen, and VM changes (new opcodes `CLOSURE` with arity,
-`APPLY_N`).
-
-#### 2. Shared closure environments (FemtoLisp-style)
+#### 1. Shared closure environments (FemtoLisp-style)
 
 When sibling closures from the same scope capture the same variables, each
 independently copies all captures:
@@ -209,7 +219,7 @@ env-pointer dereference.
 
 ### Tier 2 — medium impact
 
-#### 3. Inline unary constructors
+#### 2. Inline unary constructors
 
 `S(n)` costs 4 bytes on the heap for one field.  When the field is itself an
 immediate (like `S(O)`), the entire value fits in 32 bits with no heap
@@ -226,16 +236,7 @@ Makes Peano numbers up to ~depth 23 free (no heap), and `Some(x)`, `Left(x)`,
 
 Requires: value encoding change, VM BIND/tuple_field adjustment.
 
-#### 4. `GLOBAL_CALL` — avoid materializing closures for known targets
-
-Many call patterns are `GLOBAL idx; LOAD arg; APPLY`.  A combined
-`GLOBAL_CALL idx` opcode could jump directly to the global's code without
-pushing the closure, reading it back, and unpacking captures.  Saves stack
-traffic and avoids intermediate closure manipulation.
-
-Requires: new opcode, codegen pattern detection.
-
-#### 5. In-arena call frames (FemtoLisp-style)
+#### 3. In-arena call frames (FemtoLisp-style)
 
 The `[CallFrame; 256]` array is 2 KB on Cortex-M4.  Pushing `return_pc` and
 `frame_base` as raw `u32` values onto the arena stack instead would:
@@ -248,24 +249,18 @@ Requires: VM refactor of call/return paths.
 
 ### Tier 3 — lower impact / exploratory
 
-#### 6. Lambda lifting (compiler pass)
+#### 4. Lambda lifting (compiler pass)
 
 Lift lambdas with few free variables to top-level functions with extra
 parameters.  The caller passes captures as arguments.  Trades heap allocation
 (permanent in bump model) for stack space (temporary) — almost always
 favorable given bump-only allocation.
 
-#### 7. Stack-allocated temporary tuples
+#### 5. Stack-allocated temporary tuples
 
 Tuples that are immediately destructured by `MATCH`/`BIND` and never escape
 could stay on the stack instead of the heap.  Requires escape analysis in the
 compiler.
-
-#### 8. Word-granularity heap offsets
-
-All allocations are 4-byte aligned, but offsets are byte-addressed.  Storing
-`offset / 4` doubles the effective range.  For a 64 KB buffer, 14 bits
-suffice, freeing bits for inline payloads (supports technique 5).
 
 ---
 
@@ -274,11 +269,11 @@ suffice, freeing bits for inline payloads (supports technique 5).
 | Priority | Technique | Complexity | Estimated savings |
 |----------|-----------|------------|-------------------|
 | ~~done~~ | ~~Zero-capture closures as bare fns~~ | ~~Low~~ | ~~97% load, 14–23% heavy~~ |
-| 1 | Uncurried calling convention | High | ~50–70% fewer closure allocs |
-| 2 | Inline unary constructors | Medium | Significant for Peano-heavy code |
-| 3 | Shared environments | Medium | Good for HOF-heavy code |
+| ~~done~~ | ~~Known-arity direct calls (`CALL_DIRECT` / `TAIL_CALL_DIRECT`)~~ | ~~Medium~~ | ~~e.g. 24% fewer instr. / 63% fewer closures (`hforest_lifecycle`); 70–83% closure cut (`int_gcd`, `int_pow`)~~ |
+| ~~done~~ | ~~Word-granularity heap offsets (21-bit word index)~~ | ~~Low~~ | ~~8 MB addressable; supports denser encodings~~ |
+| 1 | Inline unary constructors | Medium | Significant for Peano-heavy code |
+| 2 | Shared environments | Medium | Good for HOF-heavy code |
 
-The uncurried calling convention addresses the root cause of closure
-proliferation but requires changes across the entire compiler pipeline and
-VM instruction set.  Inline unary constructors and shared environments are
+Known-arity direct calls address a large slice of closure proliferation for
+common global call sites.  Inline unary constructors and shared environments are
 independent medium-complexity changes that can be done in any order.

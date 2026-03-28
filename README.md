@@ -42,10 +42,12 @@ bytecode at compile time) and as a standalone CLI.
 
 ### Runtime
 
-- **Values** are tagged 32-bit words (immediates or heap pointers)
+- **Values** are tagged 32-bit words: constructors, integers, byte strings,
+  closures, and bare function pointers
 - **Heap** uses bump allocation inside the caller-provided buffer
 - **Stack** grows downward from the other end of the same buffer
-- **Closures** capture by value; recursive closures use `LETREC_FIX`
+- **Closures** capture by value; recursive closures use `FIXPOINT`
+- **Direct calls** bypass the curried closure chain for known multi-arity globals
 - **Match** dispatches on constructor tags with `BIND`/`SLIDE` for field access
 
 ### Generated modules
@@ -110,7 +112,7 @@ let prog = Program::from_blob(BYTECODE).unwrap();
 let mut vm = Vm::new(&mut buf);
 vm.load_program(&prog).unwrap();
 
-let result = vm.call(funcs::NEGB, &[Value::immediate(tags::TRUE)]).unwrap();
+let result = vm.call(funcs::NEGB, &[Value::ctor(tags::TRUE, 0)]).unwrap();
 assert_eq!(result.tag(), tags::FALSE);
 ```
 

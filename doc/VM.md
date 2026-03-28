@@ -10,18 +10,26 @@ Source files: `crates/shamrocq/src/{arena,value,vm,stats}.rs`.
 Every runtime value is a single `u32` word, split into three bit-fields:
 
 ```
- 31 30  29      24  23                   0
-┌─────┬──────────┬─────────────────────────┐
-│kind │   tag    │       payload           │
-│ 2b  │   6b    │        24b              │
-└─────┴──────────┴─────────────────────────┘
+ 31  29  28        21  20                   0
+┌──────┬────────────┬─────────────────────────┐
+│ kind │    tag     │       payload           │
+│  3b  │    8b     │        21b              │
+└──────┴────────────┴─────────────────────────┘
 ```
 
-| Kind | Bits 31:30 | Meaning |
+| Kind | Bits 31:29 | Meaning |
 |------|------------|---------|
-| Immediate | `00` | Nullary constructor — no heap data, payload unused |
-| Tuple     | `01` | Tagged heap object — payload is byte offset into the arena |
-| Closure   | `10` | Heap-allocated closure — payload is byte offset, tag unused |
+| Ctor | `000` | Constructor — 8-bit tag, 21-bit word offset (0 for nullary) |
+| Integer | `001` | Signed integer — tag bits extend payload to 29 bits |
+| Bytes | `010` | Byte string — 8-bit length, 21-bit word offset to data |
+| Closure | `110` | Heap-allocated closure — 21-bit word offset |
+| Bare fn | `111` | Zero-capture function — code address in payload, no heap |
+
+Offsets are stored as **word indices** (byte offset / 4). With 21 bits this
+addresses up to 8 MB of heap, far beyond the target buffer sizes.
+
+Integers use the 8 tag bits as an extension of the 21-bit payload, giving a
+29-bit signed range (+/-268M).
 
 This encoding keeps values register-sized and avoids pointer tagging tricks
 that would break on non-32-bit targets.
@@ -54,7 +62,7 @@ buffer; the arena partitions it into two regions that grow toward each other:
 ```
  0                              buf.len()
  ├──── heap ────►      ◄──── stack ────┤
- │ tuples, closures    │  values (LIFO) │
+ │ constructors, closures    │  values (LIFO) │
  └──────────────────────────────────────┘
        heap_top ──┘    └── stack_bot
 ```
@@ -68,7 +76,7 @@ buffer; the arena partitions it into two regions that grow toward each other:
 
 ### Heap objects
 
-**Tuple** — `N` consecutive words (one per field):
+**Constructor** — `N` consecutive words (one per field):
 
 ```
 offset+0:  field_0 (raw Value u32)
@@ -123,9 +131,15 @@ frame_base ──►  ┌─────────────┐
 The VM maintains a Rust-side `[CallFrame; 256]` array (not in the arena)
 storing `(return_pc, frame_base)` for each active non-tail call.
 
-- `APPLY`: saves the frame, increments depth, jumps.
-- `TAIL_APPLY`: truncates the current frame and reuses it — **no depth
+- `CALL`: saves the frame, increments depth, jumps.
+- `TAIL_CALL`: truncates the current frame and reuses it — **no depth
   increase**, which is how recursive Scheme functions stay bounded.
+- `CALL_DIRECT`: like `CALL` but the target code address and argument count
+  are encoded in the bytecode. No function Value is on the stack and no
+  closure unpacking is needed. Used for fully-applied calls to known
+  multi-arity globals.
+- `TAIL_CALL_DIRECT`: tail-position variant of `CALL_DIRECT`. Reuses the
+  current frame like `TAIL_CALL`.
 - `RET`: pops the result, restores `frame_base` and `pc`.  At depth 0,
   returns to the Rust caller.
 
@@ -134,7 +148,7 @@ Maximum call depth: **256**.  Exceeding it → `StackOverflow`.
 ### Tail call optimization
 
 When the compiler sees an application in tail position, it emits
-`TAIL_APPLY` instead of `APPLY`.  The VM truncates the current frame
+`TAIL_CALL` instead of `CALL`.  The VM truncates the current frame
 (`stack_truncate(frame_base)`) and lays down the new captures + argument
 in-place.  Since no `CallFrame` is pushed, tail-recursive loops use O(1)
 call stack.
@@ -162,7 +176,7 @@ an indirection cell or trampoline.
 - After the branch body, `SLIDE(n)` removes the bindings while keeping the
   result (non-tail only), and `JMP` skips remaining cases.
 
-In tail position, branches emit `RET` / `TAIL_APPLY` directly — no `SLIDE`
+In tail position, branches emit `RET` / `TAIL_CALL` directly — no `SLIDE`
 or `JMP` needed.
 
 ## Rust API
@@ -190,15 +204,19 @@ let result = vm.apply(negb_closure, &[val]).unwrap();
 ### Constructing and inspecting data
 
 ```rust
-// Allocate a tagged tuple:
-let pair = vm.alloc_tuple(tags::CONS, &[head, tail]).unwrap();
+// Allocate a tagged constructor (e.g. cons cell):
+let pair = vm.alloc_ctor(tags::CONS, &[head, tail]).unwrap();
 
 // Read fields:
-let head = vm.tuple_field(pair, 0);
-let tail = vm.tuple_field(pair, 1);
+let head = vm.ctor_field(pair, 0);
+let tail = vm.ctor_field(pair, 1);
 
 // Nullary constructors need no allocation:
-let nil = Value::immediate(tags::NIL);
+let nil = Value::ctor(tags::NIL, 0);
+
+// Integers: Value::integer(n) creates a value; integer_value() extracts it:
+let n = Value::integer(42);
+let x = n.integer_value();
 ```
 
 ### Memory management
@@ -219,7 +237,9 @@ vm.reset();
 | `Oom` | Heap allocation or stack push would overlap the other region |
 | `StackOverflow` | Call depth exceeds 256 |
 | `MatchFailure { tag, pc }` | No case in a `MATCH` table matches the scrutinee tag |
-| `NotAClosure` | `APPLY` / `TAIL_APPLY` target is not a closure value |
+| `NotAClosure` | `CALL` / `TAIL_CALL` target is not a closure value |
+| `IndexOutOfBounds` | Byte string index out of range |
+| `BytesOverflow` | Byte string concatenation would exceed 255 bytes |
 | `InvalidBytecode` | Blob too short, PC out of bounds, or malformed header |
 
 ## Stats (feature `stats`)
@@ -230,12 +250,14 @@ When compiled with `--features stats`, the VM records:
 |---------|-------------|
 | `peak_heap_bytes` | High-water mark of heap usage |
 | `peak_stack_bytes` | High-water mark of stack usage |
-| `alloc_count_tuple` | Total tuple allocations |
+| `alloc_count_ctor` | Total constructor allocations |
 | `alloc_count_closure` | Total closure allocations |
 | `alloc_bytes_total` | Total bytes allocated on the heap |
 | `exec_instruction_count` | Total instructions executed |
-| `exec_apply_count` | Non-tail `APPLY` count |
-| `exec_tail_apply_count` | `TAIL_APPLY` count |
+| `exec_call_count` | Non-tail `CALL` count |
+| `exec_tail_call_count` | `TAIL_CALL` count |
+| `exec_direct_call_count` | Non-tail `CALL_DIRECT` count |
+| `exec_tail_direct_call_count` | `TAIL_CALL_DIRECT` count |
 | `exec_match_count` | `MATCH` dispatch count |
 | `exec_peak_call_depth` | Deepest call stack reached |
 

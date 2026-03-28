@@ -41,7 +41,7 @@ within this section.
 
 Each instruction is a 1-byte opcode followed by zero or more inline operands.
 
-### `IMM` (0x01) — push immediate
+### `CTOR0` (0x01) — push nullary constructor
 
 ```
 01 tag:u8
@@ -49,13 +49,13 @@ Each instruction is a 1-byte opcode followed by zero or more inline operands.
 
 Push a nullary constructor value onto the stack.  No heap allocation.
 
-### `TUPLE` (0x02) — allocate tagged tuple
+### `CTOR` (0x02) — allocate tagged constructor
 
 ```
 02 tag:u8 arity:u8
 ```
 
-Pop `arity` values from the stack (top = last field), heap-allocate a tuple
+Pop `arity` values from the stack (top = last field), heap-allocate a constructor
 with the given tag, push the result.
 
 ### `LOAD` (0x03) — load local
@@ -81,8 +81,12 @@ Push the already-evaluated value of global slot `idx`.
 05 code_addr:u16le n_captures:u8
 ```
 
-Pop `n_captures` values from the stack (top = last capture), heap-allocate a
-closure object pointing to `code_addr` with those captures, push the result.
+If `n_captures` is 0, a `bare_fn` Value encoding the `code_addr` directly is
+pushed — no heap allocation.
+
+Otherwise, pop `n_captures` values from the stack (top = last capture),
+heap-allocate a closure object pointing to `code_addr` with those captures,
+push the result.
 
 Heap layout of a closure:
 
@@ -91,7 +95,7 @@ word 0:  code_addr:u16 << 16 | n_captures:u16
 word 1…: capture values (raw u32 each)
 ```
 
-### `APPLY` (0x06) — non-tail call
+### `CALL` (0x06) — non-tail call
 
 ```
 06
@@ -101,7 +105,7 @@ Pop `arg`, pop `func`.  Save `(return_pc, frame_base)` on the call stack.
 Unpack the closure's captures and `arg` into a new frame, jump to the
 closure's code address.
 
-### `TAIL_APPLY` (0x07) — tail call
+### `TAIL_CALL` (0x07) — tail call
 
 ```
 07
@@ -142,13 +146,13 @@ If no case matches → `MatchFailure`.
 Set `pc = offset`.  Used after non-tail match branches to skip remaining
 cases.
 
-### `BIND` (0x0B) — destructure tuple
+### `BIND` (0x0B) — destructure constructor
 
 ```
 0B n:u8
 ```
 
-Pop the scrutinee tuple, push its first `n` fields (field 0 first).  This
+Pop the scrutinee constructor, push its first `n` fields (field 0 first).  This
 makes constructor fields available as local bindings after a `MATCH`.
 
 ### `DROP` (0x0C) — discard stack slots
@@ -159,15 +163,6 @@ makes constructor fields available as local bindings after a `MATCH`.
 
 Remove the top `n` values from the stack.
 
-### `SLIDE` (0x0E) — keep result, drop bindings
-
-```
-0E n:u8
-```
-
-Pop the result, drop `n` values below it, re-push the result.  Used to clean
-up `let` and `match` bindings in non-tail position.
-
 ### `ERROR` (0x0D) — abort
 
 ```
@@ -176,6 +171,15 @@ up `let` and `match` bindings in non-tail position.
 
 Halt with `MatchFailure(tag=0xFF)`.  Emitted for exhaustiveness-checked match
 arms that should be unreachable.
+
+### `SLIDE` (0x0E) — keep result, drop bindings
+
+```
+0E n:u8
+```
+
+Pop the result, drop `n` values below it, re-push the result.  Used to clean
+up `let` and `match` bindings in non-tail position.
 
 ### `FIXPOINT` (0x0F) — tie recursive knot
 
@@ -190,25 +194,162 @@ Then overwrite slot 1 (the `letrec` dummy) with the closure and pop TOS.
 This is the only mutation in the entire VM — it makes `letrec` work without
 a GC or indirection cell.
 
+### `INT_CONST` (0x10) — push integer
+
+```
+10 value:i32le
+```
+
+Push a 29-bit signed integer Value onto the stack. No heap allocation.
+
+### `ADD` (0x11) — integer add
+
+```
+11
+```
+
+Pop two integers, push their sum (wrapping).
+
+### `SUB` (0x12) — integer subtract
+
+```
+12
+```
+
+Pop `b`, pop `a`, push `a - b` (wrapping).
+
+### `MUL` (0x13) — integer multiply
+
+```
+13
+```
+
+Pop two integers, push their product (wrapping).
+
+### `DIV` (0x14) — integer divide
+
+```
+14
+```
+
+Pop `b`, pop `a`, push `a / b` (wrapping).
+
+### `NEG` (0x15) — integer negate
+
+```
+15
+```
+
+Pop one integer, push its negation.
+
+### `EQ` (0x16) — integer equality
+
+```
+16
+```
+
+Pop two integers. Push `True` if equal, `False` otherwise.
+
+### `LT` (0x17) — integer less-than
+
+```
+17
+```
+
+Pop `b`, pop `a`. Push `True` if `a < b`, `False` otherwise.
+
+### `BYTES_CONST` (0x18) — push byte string
+
+```
+18 len:u8 data:[u8; len]
+```
+
+Heap-allocate a byte string from inline data, push the result.
+
+### `BYTES_LEN` (0x19) — byte string length
+
+```
+19
+```
+
+Pop a byte string, push its length as an integer.
+
+### `BYTES_GET` (0x1A) — byte string indexing
+
+```
+1A
+```
+
+Pop index (integer), pop byte string. Push the byte at that index as an integer. Errors with `IndexOutOfBounds` if out of range.
+
+### `BYTES_EQ` (0x1B) — byte string equality
+
+```
+1B
+```
+
+Pop two byte strings. Push `True` if equal, `False` otherwise.
+
+### `BYTES_CONCAT` (0x1C) — byte string concatenation
+
+```
+1C
+```
+
+Pop two byte strings. Heap-allocate and push their concatenation. Errors with `BytesOverflow` if the combined length exceeds 255.
+
+### `CALL_DIRECT` (0x1D) — direct known-arity call
+
+```
+1D code_addr:u16le n_args:u8
+```
+
+The `n_args` values are already on the stack. Save `(return_pc, frame_base)` on the call stack. Set `frame_base` to point at the first argument (stack_depth - n_args). Jump to `code_addr`. No function Value on the stack — the target is statically known.
+
+This is an optimization for fully-applied calls to multi-arity globals, bypassing the curried closure chain.
+
+### `TAIL_CALL_DIRECT` (0x1E) — tail direct known-arity call
+
+```
+1E code_addr:u16le n_args:u8
+```
+
+Like `CALL_DIRECT` but in tail position. Saves the `n_args` values, truncates the current frame, re-pushes the arguments, and jumps. No call-stack growth.
+
 ## Opcode summary
 
-| Mnemonic     | Hex    | Operands                                   | Size |
-|--------------|--------|--------------------------------------------|------|
-| `IMM`        | `0x01` | `tag:u8`                                   | 2    |
-| `TUPLE`      | `0x02` | `tag:u8 arity:u8`                          | 3    |
-| `LOAD`       | `0x03` | `idx:u8`                                   | 2    |
-| `GLOBAL`     | `0x04` | `idx:u16le`                                | 3    |
-| `CLOSURE`    | `0x05` | `code_addr:u16le n_captures:u8`            | 4    |
-| `APPLY`      | `0x06` | —                                          | 1    |
-| `TAIL_APPLY` | `0x07` | —                                          | 1    |
-| `RET`        | `0x08` | —                                          | 1    |
-| `MATCH`      | `0x09` | `n:u8 [tag:u8 arity:u8 off:u16le]*n`       | 2+4n |
-| `JMP`        | `0x0A` | `offset:u16le`                             | 3    |
-| `BIND`       | `0x0B` | `n:u8`                                     | 2    |
-| `DROP`       | `0x0C` | `n:u8`                                     | 2    |
-| `ERROR`      | `0x0D` | —                                          | 1    |
-| `SLIDE`      | `0x0E` | `n:u8`                                     | 2    |
-| `FIXPOINT`   | `0x0F` | `cap_idx:u8`                               | 2    |
+| Mnemonic | Hex | Operands | Size |
+|---|---|---|---|
+| `CTOR0` | `0x01` | `tag:u8` | 2 |
+| `CTOR` | `0x02` | `tag:u8 arity:u8` | 3 |
+| `LOAD` | `0x03` | `idx:u8` | 2 |
+| `GLOBAL` | `0x04` | `idx:u16le` | 3 |
+| `CLOSURE` | `0x05` | `code_addr:u16le n_captures:u8` | 4 |
+| `CALL` | `0x06` | — | 1 |
+| `TAIL_CALL` | `0x07` | — | 1 |
+| `RET` | `0x08` | — | 1 |
+| `MATCH` | `0x09` | `n:u8 [tag:u8 arity:u8 off:u16le]*n` | 2+4n |
+| `JMP` | `0x0A` | `offset:u16le` | 3 |
+| `BIND` | `0x0B` | `n:u8` | 2 |
+| `DROP` | `0x0C` | `n:u8` | 2 |
+| `ERROR` | `0x0D` | — | 1 |
+| `SLIDE` | `0x0E` | `n:u8` | 2 |
+| `FIXPOINT` | `0x0F` | `cap_idx:u8` | 2 |
+| `INT_CONST` | `0x10` | `value:i32le` | 5 |
+| `ADD` | `0x11` | — | 1 |
+| `SUB` | `0x12` | — | 1 |
+| `MUL` | `0x13` | — | 1 |
+| `DIV` | `0x14` | — | 1 |
+| `NEG` | `0x15` | — | 1 |
+| `EQ` | `0x16` | — | 1 |
+| `LT` | `0x17` | — | 1 |
+| `BYTES_CONST` | `0x18` | `len:u8 data:[u8;len]` | 2+len |
+| `BYTES_LEN` | `0x19` | — | 1 |
+| `BYTES_GET` | `0x1A` | — | 1 |
+| `BYTES_EQ` | `0x1B` | — | 1 |
+| `BYTES_CONCAT` | `0x1C` | — | 1 |
+| `CALL_DIRECT` | `0x1D` | `code_addr:u16le n_args:u8` | 4 |
+| `TAIL_CALL_DIRECT` | `0x1E` | `code_addr:u16le n_args:u8` | 4 |
 
 ## Generated companion files
 

@@ -53,8 +53,9 @@ It recognizes:
 - **Strings** — `"..."`, kept as atoms with the quotes embedded.
 - **Comments** — `;` to end of line, discarded.
 
-No numeric literals — all values are algebraic data types built from
-constructors.
+Numeric literals are recognized as atoms and converted during desugaring.
+String literals (`"..."`) are kept as atoms with their quotes for processing
+in the desugarer.
 
 ---
 
@@ -69,7 +70,10 @@ named variables.
 
 ```
 Expr  = Var(name)
+      | Int(i32)                   integer literal
+      | Bytes(Vec<u8>)             byte string literal
       | Ctor(tag_name, fields)     constructor application
+      | PrimOp(op, args)           built-in operation (+, -, *, /, etc.)
       | Lambda(param, body)        single-argument
       | App(func, arg)             single-argument
       | If(cond, then, else)
@@ -91,6 +95,10 @@ Expr  = Var(name)
 | `` `(Tag ,e1 ,e2) `` | `Ctor("Tag", [e1, e2])` |
 | `` `(Tag) `` | `Ctor("Tag", [])` |
 | `'Foo` | `Ctor("Foo", [])` |
+| `42` | `Int(42)` — integer literal |
+| `"hello"` | `Bytes(b"hello")` — byte string literal (quotes stripped) |
+| `(+ a b)` | `PrimOp(Add, [a, b])` — and similarly for `- * / neg = <` |
+| `(bytes-len s)` | `PrimOp(BytesLen, [s])` — and similarly for `bytes-get`, `bytes-eq`, `bytes-cat` |
 | `(match s ((Ctor a b) body) ...)` | `Match(s, [case...])` |
 | `(let ((x v)) body)` | `Let("x", v, body)` — multiple bindings nest |
 | `(letrec ((f v)) body)` | `Letrec("f", v, body)` — single binding only |
@@ -164,7 +172,10 @@ for the newly introduced `Let` bindings.
 ```
 RExpr = Local(u8)           de Bruijn index
       | Global(u16)         global slot
+      | Int(i32)            integer literal
+      | Bytes(Vec<u8>)      byte string literal
       | Ctor(u8, Vec)       tag ID + fields
+      | PrimOp(op, Vec)     built-in operation
       | Lambda(body)        param is implicit (index 0)
       | App(func, arg)      arg is guaranteed atomic after ANF
       | Let(val, body)
@@ -208,8 +219,13 @@ The code generator walks each resolved definition and emits bytecode into a
 linear `Emitter` buffer.  Key design choices:
 
 - **Tail-call detection** — every `compile_expr` call carries a `tail: bool`
-  flag.  In tail position, `App` emits `TAIL_APPLY` instead of `APPLY`, and
+  flag.  In tail position, `App` emits `TAIL_CALL` instead of `CALL`, and
   terminal expressions emit `RET` directly.
+- **Primitive operations** — `PrimOp` nodes compile their arguments, then
+  emit the corresponding arithmetic or byte-string opcode (`ADD`, `SUB`,
+  `BYTES_LEN`, etc.).
+- **Literals** — `Int(n)` emits `INT_CONST n`.  `Bytes(data)` emits
+  `BYTES_CONST len data`.
 - **Deferred lambda bodies** — lambda bodies are not emitted inline.  The
   `CLOSURE` instruction is emitted with a placeholder code address, and the
   body is queued.  After all globals are compiled, deferred bodies are
@@ -258,7 +274,7 @@ For `Match(scrutinee, cases)`:
 
 ### Letrec compilation
 
-1. Emit `IMM(0)` — push a dummy placeholder value.
+1. Emit `CTOR0` — push a dummy placeholder value.
 2. Compile the val expression (expected to be a `Lambda`).
 3. Find which capture slot (if any) corresponds to the self-reference
    (de Bruijn 0 from the lambda's perspective).
@@ -279,6 +295,32 @@ Lambda bodies are not emitted inline.  Instead:
 
 This means all lambda code appears after the global initializers in the
 bytecode stream.
+
+### Known-arity direct calls
+
+When the compiler detects a fully-applied call to a known multi-arity global
+— i.e., `App^N(Global(g), args)` where N equals the global's lambda-chain
+depth — it emits `CALL_DIRECT` (or `TAIL_CALL_DIRECT` in tail position)
+instead of the usual chain of `CALL` instructions.
+
+The optimization works in three phases:
+
+1. **Arity computation** — before codegen, `lambda_arity` counts the depth of
+   each global's `Lambda` chain.
+2. **Call site detection** — `try_unfold_known_call` walks the `App` spine to
+   match fully-applied known globals.  When matched, all arguments are
+   compiled onto the stack, and a `CALL_DIRECT` with a placeholder address is
+   emitted.
+3. **Flat body compilation** — after all globals and their deferred lambdas
+   are compiled, a second "flat" entry point is compiled for each
+   multi-arity global.  This flat body is the innermost lambda's body
+   compiled with a flat frame context (`frame_depth = arity`, no captures).
+   The `CALL_DIRECT` placeholders are then patched with the flat body
+   addresses.
+
+The de Bruijn indices in the innermost body naturally map to a flat frame
+`[arg_0, arg_1, ..., arg_{N-1}]` without re-indexing.  Partial applications
+(fewer args than arity) fall through to the existing curried code path.
 
 ### Output
 
