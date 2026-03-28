@@ -20,8 +20,7 @@ fn value_integer_roundtrip() {
     for &n in &[0, 1, -1, 42, -42, 1000, -1000, 0x1FFF_FFFF, -0x2000_0000] {
         let v = Value::integer(n);
         assert!(v.is_integer());
-        assert!(!v.is_immediate());
-        assert!(!v.is_tuple());
+        assert!(!v.is_ctor());
         assert!(!v.is_callable());
         assert_eq!(v.integer_value(), n, "roundtrip failed for {}", n);
     }

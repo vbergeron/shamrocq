@@ -14,7 +14,7 @@ fn compose_negb_negb() {
 
     let negb = vm.global_value(funcs::NEGB);
     let composed = vm.call(funcs::COMPOSE, &[negb, negb]).unwrap();
-    let result = vm.apply(composed, &[Value::immediate(tags::TRUE)]).unwrap();
+    let result = vm.apply(composed, &[Value::ctor(tags::TRUE, 0)]).unwrap();
     assert_eq!(result.tag(), tags::TRUE, "compose(negb, negb)(True) = True");
     print_stats("compose(negb,negb)", &vm);
 }
@@ -43,8 +43,8 @@ fn const_fn_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let t = Value::immediate(tags::TRUE);
-    let f = Value::immediate(tags::FALSE);
+    let t = Value::ctor(tags::TRUE, 0);
+    let f = Value::ctor(tags::FALSE, 0);
     let always_true = vm.call(funcs::CONST_FN, &[t]).unwrap();
     let result = vm.apply(always_true, &[f]).unwrap();
     assert_eq!(result.tag(), tags::TRUE);
@@ -60,7 +60,7 @@ fn twice_negb() {
 
     let negb = vm.global_value(funcs::NEGB);
     let double_neg = vm.call(funcs::TWICE, &[negb]).unwrap();
-    let result = vm.apply(double_neg, &[Value::immediate(tags::FALSE)]).unwrap();
+    let result = vm.apply(double_neg, &[Value::ctor(tags::FALSE, 0)]).unwrap();
     assert_eq!(result.tag(), tags::FALSE, "twice(negb)(False) = False");
     print_stats("twice(negb)", &vm);
 }
@@ -75,7 +75,7 @@ fn apply_n_successor() {
     // negb applied 4 times to True: negb^4(True) = True
     let negb = vm.global_value(funcs::NEGB);
     let n4 = peano(&mut vm, 4);
-    let t = Value::immediate(tags::TRUE);
+    let t = Value::ctor(tags::TRUE, 0);
     let result = vm.call(funcs::APPLY_N, &[negb, n4, t]).unwrap();
     assert_eq!(result.tag(), tags::TRUE, "apply_n(negb, 4, True) = True");
 

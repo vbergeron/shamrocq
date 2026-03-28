@@ -4,8 +4,8 @@
 /// inline operands of fixed size per opcode. All multi-byte operands are
 /// little-endian.
 pub mod op {
-    pub const IMM: u8 = 0x01;
-    pub const TUPLE: u8 = 0x02;
+    pub const CTOR0: u8 = 0x01;
+    pub const CTOR: u8 = 0x02;
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
@@ -33,8 +33,8 @@ pub mod op {
 /// and by the runtime to decode it.
 ///
 /// Instruction layouts:
-///   IMM       tag:u8
-///   TUPLE     tag:u8  arity:u8
+///   CTOR0     tag:u8
+///   CTOR      tag:u8  arity:u8
 ///   LOAD      idx:u8
 ///   GLOBAL    idx:u16le
 ///   CLOSURE   code_addr:u16le  n_captures:u8
@@ -60,13 +60,13 @@ impl Emitter {
         self.code.len()
     }
 
-    pub fn emit_imm(&mut self, tag: u8) {
-        self.code.push(op::IMM);
+    pub fn emit_ctor0(&mut self, tag: u8) {
+        self.code.push(op::CTOR0);
         self.code.push(tag);
     }
 
-    pub fn emit_tuple(&mut self, tag: u8, arity: u8) {
-        self.code.push(op::TUPLE);
+    pub fn emit_ctor(&mut self, tag: u8, arity: u8) {
+        self.code.push(op::CTOR);
         self.code.push(tag);
         self.code.push(arity);
     }

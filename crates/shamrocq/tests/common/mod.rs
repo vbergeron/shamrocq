@@ -59,14 +59,14 @@ pub fn print_stats(name: &str, vm: &Vm) {
             concat!(
                 "{{\"timestamp\":\"{ts}\",\"commit\":\"{co}\",\"test\":\"{nm}\",",
                 "\"peak_heap_bytes\":{ph},\"peak_stack_bytes\":{ps},",
-                "\"alloc_count_tuple\":{at},\"alloc_count_closure\":{ac},\"alloc_bytes_total\":{ab},",
+                "\"alloc_count_ctor\":{at},\"alloc_count_closure\":{ac},\"alloc_bytes_total\":{ab},",
                 "\"exec_instruction_count\":{ei},\"exec_apply_count\":{ea},",
                 "\"exec_tail_apply_count\":{et},\"exec_match_count\":{em},\"exec_peak_call_depth\":{ed},",
                 "\"final_heap_bytes\":{fh},\"final_stack_bytes\":{fs},\"final_free_bytes\":{ff}}}"
             ),
             ts = timestamp, co = commit, nm = name,
             ph = s.peak_heap_bytes, ps = s.peak_stack_bytes,
-            at = s.alloc_count_tuple, ac = s.alloc_count_closure, ab = s.alloc_bytes_total,
+            at = s.alloc_count_ctor, ac = s.alloc_count_closure, ab = s.alloc_bytes_total,
             ei = s.exec_instruction_count, ea = s.exec_apply_count,
             et = s.exec_tail_apply_count, em = s.exec_match_count, ed = s.exec_peak_call_depth,
             fh = snap.heap_bytes, fs = snap.stack_bytes, ff = snap.free_bytes,
@@ -82,9 +82,9 @@ pub fn print_stats(_name: &str, _vm: &Vm) {}
 
 #[cfg(feature = "integration")]
 pub fn peano(vm: &mut Vm, n: u32) -> Value {
-    let mut v = Value::immediate(ctors::O);
+    let mut v = Value::ctor(ctors::O, 0);
     for _ in 0..n {
-        v = vm.alloc_tuple(ctors::S, &[v]).unwrap();
+        v = vm.alloc_ctor(ctors::S, &[v]).unwrap();
     }
     v
 }
@@ -93,7 +93,7 @@ pub fn peano(vm: &mut Vm, n: u32) -> Value {
 pub fn unpeano(vm: &Vm, mut v: Value) -> u32 {
     let mut n = 0;
     while v.tag() == ctors::S {
-        v = vm.tuple_field(v, 0);
+        v = vm.ctor_field(v, 0);
         n += 1;
     }
     n
@@ -103,17 +103,17 @@ pub fn unpeano(vm: &Vm, mut v: Value) -> u32 {
 pub fn list_to_vec(vm: &Vm, mut v: Value) -> Vec<Value> {
     let mut out = Vec::new();
     while v.tag() == ctors::CONS {
-        out.push(vm.tuple_field(v, 0));
-        v = vm.tuple_field(v, 1);
+        out.push(vm.ctor_field(v, 0));
+        v = vm.ctor_field(v, 1);
     }
     out
 }
 
 #[cfg(feature = "integration")]
 pub fn make_list(vm: &mut Vm, items: &[Value]) -> Value {
-    let mut list = Value::immediate(ctors::NIL);
+    let mut list = Value::ctor(ctors::NIL, 0);
     for &item in items.iter().rev() {
-        list = vm.alloc_tuple(ctors::CONS, &[item, list]).unwrap();
+        list = vm.alloc_ctor(ctors::CONS, &[item, list]).unwrap();
     }
     list
 }

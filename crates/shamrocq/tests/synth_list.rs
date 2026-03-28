@@ -36,7 +36,7 @@ fn append_empty() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::immediate(ctors::NIL);
+    let nil = Value::ctor(ctors::NIL, 0);
     let n1 = peano(&mut vm, 1);
     let l = make_list(&mut vm, &[n1]);
 
@@ -82,7 +82,7 @@ fn nth_found() {
     let idx = peano(&mut vm, 1);
     let result = vm.call(funcs::NTH, &[idx, l]).unwrap();
     assert_eq!(result.tag(), ctors::SOME);
-    assert_eq!(unpeano(&vm, vm.tuple_field(result, 0)), 1);
+    assert_eq!(unpeano(&vm, vm.ctor_field(result, 0)), 1);
     print_stats("nth(1,[0,1,2])", &vm);
 }
 
@@ -120,10 +120,10 @@ fn zip_basic() {
     let v = list_to_vec(&vm, result);
     assert_eq!(v.len(), 2);
     assert_eq!(v[0].tag(), ctors::PAIR);
-    assert_eq!(unpeano(&vm, vm.tuple_field(v[0], 0)), 1);
-    assert_eq!(unpeano(&vm, vm.tuple_field(v[0], 1)), 3);
-    assert_eq!(unpeano(&vm, vm.tuple_field(v[1], 0)), 2);
-    assert_eq!(unpeano(&vm, vm.tuple_field(v[1], 1)), 4);
+    assert_eq!(unpeano(&vm, vm.ctor_field(v[0], 0)), 1);
+    assert_eq!(unpeano(&vm, vm.ctor_field(v[0], 1)), 3);
+    assert_eq!(unpeano(&vm, vm.ctor_field(v[1], 0)), 2);
+    assert_eq!(unpeano(&vm, vm.ctor_field(v[1], 1)), 4);
     print_stats("zip([1,2],[3,4])", &vm);
 }
 

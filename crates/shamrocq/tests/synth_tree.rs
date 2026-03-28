@@ -6,8 +6,8 @@ use common::{setup, peano, unpeano, list_to_vec, print_stats};
 use shamrocq::{tags, ctors, funcs, Program, Value, Vm};
 
 fn make_leaf(vm: &mut Vm) -> Value {
-    let nil = Value::immediate(ctors::NIL);
-    vm.alloc_tuple(ctors::LEAF, &[nil]).unwrap()
+    let nil = Value::ctor(ctors::NIL, 0);
+    vm.alloc_ctor(ctors::LEAF, &[nil]).unwrap()
 }
 
 #[test]

@@ -40,23 +40,23 @@ impl<'a> Arena<'a> {
         Ok(base)
     }
 
-    pub fn alloc_tuple(&mut self, tag: u8, fields: &[Value]) -> Result<Value, ArenaError> {
+    pub fn alloc_ctor(&mut self, tag: u8, fields: &[Value]) -> Result<Value, ArenaError> {
         let offset = self.alloc(fields.len())?;
         for (i, &f) in fields.iter().enumerate() {
             self.write_word(offset + i * 4, f.raw());
         }
-        Ok(Value::tuple(tag, offset))
+        Ok(Value::ctor(tag, offset))
     }
 
-    /// Allocate a tuple by popping `arity` values from the arena stack.
+    /// Allocate a constructor by popping `arity` values from the arena stack.
     /// Fields are expected on the stack in order (first field deepest, last on top).
-    pub fn alloc_tuple_from_stack(&mut self, tag: u8, arity: usize) -> Result<Value, ArenaError> {
+    pub fn alloc_ctor_from_stack(&mut self, tag: u8, arity: usize) -> Result<Value, ArenaError> {
         let offset = self.alloc(arity)?;
         for i in (0..arity).rev() {
             let field = self.stack_pop();
             self.write_word(offset + i * 4, field.raw());
         }
-        Ok(Value::tuple(tag, offset))
+        Ok(Value::ctor(tag, offset))
     }
 
     pub fn alloc_closure(
@@ -89,7 +89,7 @@ impl<'a> Arena<'a> {
         Ok(Value::closure(offset))
     }
 
-    pub fn tuple_field(&self, val: Value, idx: usize) -> Value {
+    pub fn ctor_field(&self, val: Value, idx: usize) -> Value {
         let base = val.offset();
         Value::from_raw(self.read_word(base + idx * 4))
     }

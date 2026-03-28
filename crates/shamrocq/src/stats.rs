@@ -6,7 +6,7 @@ pub struct Stats {
     pub peak_heap_bytes: usize,
     pub peak_stack_bytes: usize,
 
-    pub alloc_count_tuple: u32,
+    pub alloc_count_ctor: u32,
     pub alloc_count_closure: u32,
     pub alloc_bytes_total: u32,
 
@@ -24,7 +24,7 @@ impl fmt::Display for Stats {
         writeln!(f, "    peak heap      {:>6} B", self.peak_heap_bytes)?;
         writeln!(f, "    peak stack     {:>6} B", self.peak_stack_bytes)?;
         writeln!(f, "  allocations")?;
-        writeln!(f, "    tuples         {:>6}", self.alloc_count_tuple)?;
+        writeln!(f, "    ctors          {:>6}", self.alloc_count_ctor)?;
         writeln!(f, "    closures       {:>6}", self.alloc_count_closure)?;
         writeln!(f, "    total bytes    {:>6} B", self.alloc_bytes_total)?;
         writeln!(f, "  execution")?;

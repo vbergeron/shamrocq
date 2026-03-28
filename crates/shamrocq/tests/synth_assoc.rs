@@ -6,12 +6,12 @@ use common::{setup, peano, unpeano, list_to_vec, print_stats};
 use shamrocq::{ctors, funcs, Program, Value, Vm};
 
 fn make_assoc(vm: &mut Vm, pairs: &[(u32, u32)]) -> Value {
-    let mut list = Value::immediate(ctors::NIL);
+    let mut list = Value::ctor(ctors::NIL, 0);
     for &(k, v) in pairs.iter().rev() {
         let key = peano(vm, k);
         let val = peano(vm, v);
-        let pair = vm.alloc_tuple(ctors::PAIR, &[key, val]).unwrap();
-        list = vm.alloc_tuple(ctors::CONS, &[pair, list]).unwrap();
+        let pair = vm.alloc_ctor(ctors::PAIR, &[key, val]).unwrap();
+        list = vm.alloc_ctor(ctors::CONS, &[pair, list]).unwrap();
     }
     list
 }
@@ -29,7 +29,7 @@ fn assoc_get_found() {
 
     let result = vm.call(funcs::ASSOC_GET, &[ord, key, alist]).unwrap();
     assert_eq!(result.tag(), ctors::SOME);
-    assert_eq!(unpeano(&vm, vm.tuple_field(result, 0)), 20);
+    assert_eq!(unpeano(&vm, vm.ctor_field(result, 0)), 20);
     print_stats("assoc_get(2, [(1,10),(2,20),(3,30)])", &vm);
 }
 
@@ -70,7 +70,7 @@ fn assoc_set_new_key() {
     let key = peano(&mut vm, 2);
     let result = vm.call(funcs::ASSOC_GET, &[ord, key, updated]).unwrap();
     assert_eq!(result.tag(), ctors::SOME);
-    assert_eq!(unpeano(&vm, vm.tuple_field(result, 0)), 20);
+    assert_eq!(unpeano(&vm, vm.ctor_field(result, 0)), 20);
     print_stats("assoc_set(2, 20, [(1,10)])", &vm);
 }
 
@@ -94,7 +94,7 @@ fn assoc_set_overwrite() {
     let key = peano(&mut vm, 2);
     let result = vm.call(funcs::ASSOC_GET, &[ord, key, updated]).unwrap();
     assert_eq!(result.tag(), ctors::SOME);
-    assert_eq!(unpeano(&vm, vm.tuple_field(result, 0)), 99);
+    assert_eq!(unpeano(&vm, vm.ctor_field(result, 0)), 99);
     print_stats("assoc_set(2, 99, [(1,10),(2,20)])", &vm);
 }
 

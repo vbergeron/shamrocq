@@ -148,12 +148,12 @@ impl Compiler {
 
             RExpr::Ctor(tag, fields) => {
                 if fields.is_empty() {
-                    self.emitter.emit_imm(*tag);
+                    self.emitter.emit_ctor0(*tag);
                 } else {
                     for f in fields {
                         self.compile_expr(f, ctx, false);
                     }
-                    self.emitter.emit_tuple(*tag, fields.len() as u8);
+                    self.emitter.emit_ctor(*tag, fields.len() as u8);
                 }
                 if tail {
                     self.emitter.emit_ret();
@@ -207,7 +207,7 @@ impl Compiler {
 
             RExpr::Letrec(val, body) => {
                 // Push a dummy value for the letrec binding slot.
-                self.emitter.emit_imm(0);
+                self.emitter.emit_ctor0(0);
                 ctx.push_bindings(1);
 
                 // Compile val (expected to be a Lambda that captures itself).

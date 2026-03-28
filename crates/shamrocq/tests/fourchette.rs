@@ -21,9 +21,8 @@ fn negb_true_is_false() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let result = vm.call(funcs::NEGB, &[Value::immediate(tags::TRUE)]).unwrap();
+    let result = vm.call(funcs::NEGB, &[Value::ctor(tags::TRUE, 0)]).unwrap();
     assert_eq!(result.tag(), tags::FALSE);
-    assert!(result.is_immediate());
     print_stats("negb(true)", &vm);
 }
 
@@ -34,9 +33,8 @@ fn negb_false_is_true() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let result = vm.call(funcs::NEGB, &[Value::immediate(tags::FALSE)]).unwrap();
+    let result = vm.call(funcs::NEGB, &[Value::ctor(tags::FALSE, 0)]).unwrap();
     assert_eq!(result.tag(), tags::TRUE);
-    assert!(result.is_immediate());
     print_stats("negb(false)", &vm);
 }
 
@@ -47,10 +45,9 @@ fn length_nil_is_zero() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::immediate(ctors::NIL);
+    let nil = Value::ctor(ctors::NIL, 0);
     let result = vm.call(funcs::LENGTH, &[nil]).unwrap();
     assert_eq!(result.tag(), ctors::O);
-    assert!(result.is_immediate());
     print_stats("length(nil)", &vm);
 }
 
@@ -61,14 +58,13 @@ fn length_singleton() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::immediate(ctors::NIL);
-    let elem = Value::immediate(ctors::O);
-    let list = vm.alloc_tuple(ctors::CONS, &[elem, nil]).unwrap();
+    let nil = Value::ctor(ctors::NIL, 0);
+    let elem = Value::ctor(ctors::O, 0);
+    let list = vm.alloc_ctor(ctors::CONS, &[elem, nil]).unwrap();
 
     let result = vm.call(funcs::LENGTH, &[list]).unwrap();
     assert_eq!(result.tag(), ctors::S);
-    assert!(result.is_tuple());
-    let inner = vm.tuple_field(result, 0);
+    let inner = vm.ctor_field(result, 0);
     assert_eq!(inner.tag(), ctors::O);
     print_stats("length([_])", &vm);
 }
@@ -80,8 +76,8 @@ fn leb_zero_anything_is_true() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let zero = Value::immediate(ctors::O);
-    let one = vm.alloc_tuple(ctors::S, &[zero]).unwrap();
+    let zero = Value::ctor(ctors::O, 0);
+    let one = vm.alloc_ctor(ctors::S, &[zero]).unwrap();
 
     let result = vm.call(funcs::LEB, &[zero, one]).unwrap();
     assert_eq!(result.tag(), tags::TRUE);
@@ -95,14 +91,14 @@ fn map_negb_over_list() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::immediate(ctors::NIL);
-    let t = Value::immediate(tags::TRUE);
-    let f = Value::immediate(tags::FALSE);
-    let list = vm.alloc_tuple(ctors::CONS, &[t, nil]).unwrap();
-    let list = vm.alloc_tuple(ctors::CONS, &[f, list]).unwrap();
+    let nil = Value::ctor(ctors::NIL, 0);
+    let t = Value::ctor(tags::TRUE, 0);
+    let f = Value::ctor(tags::FALSE, 0);
+    let list = vm.alloc_ctor(ctors::CONS, &[t, nil]).unwrap();
+    let list = vm.alloc_ctor(ctors::CONS, &[f, list]).unwrap();
 
     assert_eq!(list.tag(), ctors::CONS);
-    let head = vm.tuple_field(list, 0);
+    let head = vm.ctor_field(list, 0);
     assert_eq!(head.tag(), tags::FALSE);
     print_stats("map_negb_over_list", &vm);
 }
@@ -114,19 +110,19 @@ fn hforest_init_creates_forest() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let prev = Value::immediate(ctors::O);
-    let value = Value::immediate(ctors::O);
-    let prev_height = Value::immediate(ctors::O);
+    let prev = Value::ctor(ctors::O, 0);
+    let value = Value::ctor(ctors::O, 0);
+    let prev_height = Value::ctor(ctors::O, 0);
 
     let result = vm
         .call(funcs::HFOREST_INIT, &[prev, value, prev_height])
         .unwrap();
     assert_eq!(result.tag(), ctors::BUILD_HFOREST);
 
-    let roots = vm.tuple_field(result, 0);
+    let roots = vm.ctor_field(result, 0);
     assert_eq!(roots.tag(), ctors::CONS);
 
-    let edges = vm.tuple_field(result, 1);
+    let edges = vm.ctor_field(result, 1);
     assert_eq!(edges.tag(), ctors::CONS);
     print_stats("hforest_init(O, O, O)", &vm);
 }
@@ -138,7 +134,7 @@ fn nat_ord_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let zero = Value::immediate(ctors::O);
+    let zero = Value::ctor(ctors::O, 0);
     let one = peano(&mut vm, 1);
     let two = peano(&mut vm, 2);
 
@@ -176,7 +172,7 @@ fn eqb_and_leb0_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
     let h = vm.global_value(funcs::NAT_ORD);
 
@@ -204,14 +200,14 @@ fn merge_sorted_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
-    let nil = Value::immediate(ctors::NIL);
+    let nil = Value::ctor(ctors::NIL, 0);
 
     // Simple: merge_sorted(nat_ord, [0], [1])
     let h = vm.global_value(funcs::NAT_ORD);
-    let l1 = vm.alloc_tuple(ctors::CONS, &[n0, nil]).unwrap();
-    let l2 = vm.alloc_tuple(ctors::CONS, &[n1, nil]).unwrap();
+    let l1 = vm.alloc_ctor(ctors::CONS, &[n0, nil]).unwrap();
+    let l2 = vm.alloc_ctor(ctors::CONS, &[n1, nil]).unwrap();
 
     let merged = vm.call(funcs::MERGE_SORTED, &[h, l1, l2]).unwrap();
     let merged_vec = list_to_vec(&vm, merged);
@@ -227,13 +223,13 @@ fn merge_dedup_sorted_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
-    let nil = Value::immediate(ctors::NIL);
+    let nil = Value::ctor(ctors::NIL, 0);
     let h = vm.global_value(funcs::NAT_ORD);
 
-    let l1 = vm.alloc_tuple(ctors::CONS, &[n0, nil]).unwrap();
-    let l2 = vm.alloc_tuple(ctors::CONS, &[n1, nil]).unwrap();
+    let l1 = vm.alloc_ctor(ctors::CONS, &[n0, nil]).unwrap();
+    let l2 = vm.alloc_ctor(ctors::CONS, &[n1, nil]).unwrap();
 
     let merged = vm.call(funcs::MERGE_DEDUP_SORTED, &[h, l1, l2]).unwrap();
     let merged_vec = list_to_vec(&vm, merged);
@@ -249,7 +245,7 @@ fn merge_dedup_sorted_overlap() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
     let n2 = peano(&mut vm, 2);
     let n3 = peano(&mut vm, 3);
@@ -280,15 +276,15 @@ fn ordroot_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
 
     let h = vm.global_value(funcs::NAT_ORD);
     let ord = vm.call(funcs::ORDROOT, &[h]).unwrap();
 
     // Create two roots with different hashes
-    let r1 = vm.alloc_tuple(ctors::BUILD_ROOT, &[n0, n0]).unwrap(); // root(hash=0, height=0)
-    let r2 = vm.alloc_tuple(ctors::BUILD_ROOT, &[n1, n0]).unwrap(); // root(hash=1, height=0)
+    let r1 = vm.alloc_ctor(ctors::BUILD_ROOT, &[n0, n0]).unwrap(); // root(hash=0, height=0)
+    let r2 = vm.alloc_ctor(ctors::BUILD_ROOT, &[n1, n0]).unwrap(); // root(hash=1, height=0)
 
     // ordRoot(nat_ord)(r1, r2) should return Left (0 <= 1)
     let result = vm.apply(ord, &[r1, r2]).unwrap();
@@ -304,14 +300,14 @@ fn merge_roots_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
-    let nil = Value::immediate(ctors::NIL);
+    let nil = Value::ctor(ctors::NIL, 0);
 
-    let r1 = vm.alloc_tuple(ctors::BUILD_ROOT, &[n0, n0]).unwrap();
-    let r2 = vm.alloc_tuple(ctors::BUILD_ROOT, &[n1, n0]).unwrap();
-    let l1 = vm.alloc_tuple(ctors::CONS, &[r1, nil]).unwrap();
-    let l2 = vm.alloc_tuple(ctors::CONS, &[r2, nil]).unwrap();
+    let r1 = vm.alloc_ctor(ctors::BUILD_ROOT, &[n0, n0]).unwrap();
+    let r2 = vm.alloc_ctor(ctors::BUILD_ROOT, &[n1, n0]).unwrap();
+    let l1 = vm.alloc_ctor(ctors::CONS, &[r1, nil]).unwrap();
+    let l2 = vm.alloc_ctor(ctors::CONS, &[r2, nil]).unwrap();
 
     let h = vm.global_value(funcs::NAT_ORD);
     let merged = vm.call(funcs::MERGE_ROOTS, &[h, l1, l2]).unwrap();
@@ -328,7 +324,7 @@ fn hforest_merge_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
     let n3 = peano(&mut vm, 3);
 
@@ -350,15 +346,15 @@ fn hforest_lifecycle() {
 
     // --- List + higher-order function phase ---
 
-    let nil = Value::immediate(ctors::NIL);
-    let t = Value::immediate(tags::TRUE);
-    let f = Value::immediate(tags::FALSE);
+    let nil = Value::ctor(ctors::NIL, 0);
+    let t = Value::ctor(tags::TRUE, 0);
+    let f = Value::ctor(tags::FALSE, 0);
 
     // Build [True, False, True, False]
-    let list = vm.alloc_tuple(ctors::CONS, &[f, nil]).unwrap();
-    let list = vm.alloc_tuple(ctors::CONS, &[t, list]).unwrap();
-    let list = vm.alloc_tuple(ctors::CONS, &[f, list]).unwrap();
-    let list = vm.alloc_tuple(ctors::CONS, &[t, list]).unwrap();
+    let list = vm.alloc_ctor(ctors::CONS, &[f, nil]).unwrap();
+    let list = vm.alloc_ctor(ctors::CONS, &[t, list]).unwrap();
+    let list = vm.alloc_ctor(ctors::CONS, &[f, list]).unwrap();
+    let list = vm.alloc_ctor(ctors::CONS, &[t, list]).unwrap();
     assert_eq!(list_to_vec(&vm, list).len(), 4);
 
     // map(negb, list) → [False, True, False, True]
@@ -398,7 +394,7 @@ fn hforest_lifecycle() {
     // valid_roots removes roots whose hash appears as an edge child_hash (=value).
     // So we need prev ≠ value.
 
-    let n0 = Value::immediate(ctors::O);
+    let n0 = Value::ctor(ctors::O, 0);
     let n1 = peano(&mut vm, 1);
     let n2 = peano(&mut vm, 2);
     let n3 = peano(&mut vm, 3);
@@ -418,8 +414,8 @@ fn hforest_lifecycle() {
     let merged = vm.call(funcs::HFOREST_MERGE, &[h, f1, f2]).unwrap();
     assert_eq!(merged.tag(), ctors::BUILD_HFOREST);
 
-    let merged_roots = list_to_vec(&vm, vm.tuple_field(merged, 0));
-    let merged_edges = list_to_vec(&vm, vm.tuple_field(merged, 1));
+    let merged_roots = list_to_vec(&vm, vm.ctor_field(merged, 0));
+    let merged_edges = list_to_vec(&vm, vm.ctor_field(merged, 1));
     assert_eq!(merged_roots.len(), 2, "merged should have 2 roots (0 and 2)");
     assert_eq!(merged_edges.len(), 2, "merged should have 2 edges");
 
@@ -452,8 +448,8 @@ fn hforest_lifecycle() {
     let h = vm.global_value(funcs::NAT_ORD);
     let inserted = vm.call(funcs::HFOREST_INSERT, &[h, n4, n3, n0, merged]).unwrap();
     assert_eq!(inserted.tag(), ctors::PAIR);
-    let new_forest = vm.tuple_field(inserted, 0);
-    let was_new = vm.tuple_field(inserted, 1);
+    let new_forest = vm.ctor_field(inserted, 0);
+    let was_new = vm.ctor_field(inserted, 1);
     assert_eq!(new_forest.tag(), ctors::BUILD_HFOREST);
     assert_eq!(was_new.tag(), tags::TRUE);
 

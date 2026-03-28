@@ -6,8 +6,8 @@ use crate::stats::MemSnapshot;
 use crate::value::Value;
 
 mod op {
-    pub const IMM: u8 = 0x01;
-    pub const TUPLE: u8 = 0x02;
+    pub const CTOR0: u8 = 0x01;
+    pub const CTOR: u8 = 0x02;
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
@@ -140,7 +140,7 @@ impl<'buf> Vm<'buf> {
     pub fn new(buf: &'buf mut [u8]) -> Self {
         Vm {
             arena: Arena::new(buf),
-            globals: [Value::immediate(0); 64],
+            globals: [Value::ctor(0, 0); 64],
             n_globals: 0,
             code: &[],
             call_stack: core::array::from_fn(|_| CallFrame::fresh()),
@@ -201,12 +201,12 @@ impl<'buf> Vm<'buf> {
         Ok(func)
     }
 
-    pub fn tuple_field(&self, val: Value, idx: usize) -> Value {
-        self.arena.tuple_field(val, idx)
+    pub fn ctor_field(&self, val: Value, idx: usize) -> Value {
+        self.arena.ctor_field(val, idx)
     }
 
-    pub fn alloc_tuple(&mut self, tag: u8, fields: &[Value]) -> Result<Value, VmError> {
-        Ok(self.arena.alloc_tuple(tag, fields)?)
+    pub fn alloc_ctor(&mut self, tag: u8, fields: &[Value]) -> Result<Value, VmError> {
+        Ok(self.arena.alloc_ctor(tag, fields)?)
     }
 
     fn record_heap(&mut self) {
@@ -238,19 +238,19 @@ impl<'buf> Vm<'buf> {
             pc += 1;
 
             match opcode {
-                op::IMM => {
+                op::CTOR0 => {
                     let tag = code[pc];
                     pc += 1;
-                    self.arena.stack_push(Value::immediate(tag))?;
+                    self.arena.stack_push(Value::ctor(tag, 0))?;
                     self.record_stack();
                 }
 
-                op::TUPLE => {
+                op::CTOR => {
                     let tag = code[pc];
                     let arity = code[pc + 1] as usize;
                     pc += 2;
-                    let val = self.arena.alloc_tuple_from_stack(tag, arity)?;
-                    stat!(self, alloc_count_tuple += 1);
+                    let val = self.arena.alloc_ctor_from_stack(tag, arity)?;
+                    stat!(self, alloc_count_ctor += 1);
                     stat!(self, alloc_bytes_total += (arity * 4) as u32);
                     self.record_heap();
                     self.arena.stack_push(val)?;
@@ -402,7 +402,7 @@ impl<'buf> Vm<'buf> {
                     pc += 1;
                     let scrutinee = self.arena.stack_pop();
                     for i in 0..n {
-                        let field = self.arena.tuple_field(scrutinee, i);
+                        let field = self.arena.ctor_field(scrutinee, i);
                         self.arena.stack_push(field)?;
                     }
                     self.record_stack();
@@ -484,14 +484,14 @@ impl<'buf> Vm<'buf> {
                     let b = self.arena.stack_pop().integer_value();
                     let a = self.arena.stack_pop().integer_value();
                     let tag = if a == b { crate::value::tags::TRUE } else { crate::value::tags::FALSE };
-                    self.arena.stack_push(Value::immediate(tag))?;
+                    self.arena.stack_push(Value::ctor(tag, 0))?;
                 }
 
                 op::LT => {
                     let b = self.arena.stack_pop().integer_value();
                     let a = self.arena.stack_pop().integer_value();
                     let tag = if a < b { crate::value::tags::TRUE } else { crate::value::tags::FALSE };
-                    self.arena.stack_push(Value::immediate(tag))?;
+                    self.arena.stack_push(Value::ctor(tag, 0))?;
                 }
 
                 _ => return Err(VmError::InvalidBytecode),
