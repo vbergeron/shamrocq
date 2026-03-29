@@ -61,6 +61,73 @@ Core tags (`True`, `False`, `Nil`, `Cons`, `O`, `S`, …) live in
 `value::tags`.  Scheme-defined constructors get their constants generated
 automatically — no manual registration needed.
 
+## Fit for Rocq extraction
+
+Rocq's extraction to Scheme produces **pure, finite, first-order functional code**: curried
+lambdas, inductive types encoded as constructors, recursive functions, and pattern matching.
+Shamrocq is built around exactly this profile and nothing more.
+
+- **Constructor-based ADTs.** Rocq inductive types extract to constructor calls.  Shamrocq
+  represents every value as a 32-bit tagged word — an 8-bit constructor tag plus heap-allocated
+  fields — and dispatches on tags with a single `MATCH` instruction.  No symbol interning, no
+  hash lookup, no boxing overhead.
+- **Curried application.** Extraction emits multi-argument functions as nested lambdas.
+  Shamrocq's `@` sugar and the direct-call optimisation (see below) handle this natively,
+  bypassing the closure chain for fully-applied known globals and reducing instruction count by
+  20–80 % on typical extracted functions.
+- **Proper tail calls.** Rocq's structural recursion maps directly to Scheme tail recursion.
+  The VM implements `TAIL_CALL` and `TAIL_CALL_DIRECT` instructions that reuse the current
+  frame, so all recursive patterns — `fold_left`, `merge_sorted`, tree traversal — run in
+  O(1) stack space.
+- **Deterministic, finite heaps.** Extracted Rocq programs are pure functions: given fixed
+  inputs they allocate a fixed amount of memory and terminate.  Shamrocq exploits this
+  directly: a single caller-provided buffer is split between heap (bump-up) and stack
+  (bump-down), with no garbage collector.  Between calls the arena resets in O(1).  There
+  are never GC pauses, never stop-the-world events, never non-deterministic latency.
+- **Byte strings for `ExtractionString`.** Rocq string extraction produces flat byte arrays;
+  shamrocq's `bytes` value type covers `bytes-len`, `bytes-get`, `bytes-eq`, and `bytes-cat`
+  directly, without a full string library.
+
+Compared to general-purpose Scheme VMs, the design choices are deliberately narrow:
+
+- **TinyScheme / FemtoLisp / Guile** ship a mark-and-sweep or copying GC, a symbol table,
+  `call/cc`, a full numeric tower, ports, and a macro expander.  Combined flash footprint
+  typically exceeds 50–100 KB.  Shamrocq's VM fits in ~12 KB of `.text` with ~3 KB of
+  bytecode — 4–8× smaller — and requires no libc.
+- **No fragmentation.** Bump allocation never produces holes.  The heap layout after a call
+  is identical every time for identical inputs.
+- **`no_std` by construction.** The runtime has zero external dependencies and no `unsafe`
+  allocator trait — it can be linked into any bare-metal Cortex-M firmware without an OS or
+  heap region.
+- **Single representation.** All values are 32-bit words.  There is no NaN-boxing, no
+  pointer tagging with alignment tricks, no 64-bit pointers.  The 32-bit layout fits
+  Cortex-M registers directly.
+
+## Limitations
+
+Shamrocq is deliberately not a general-purpose Scheme.  The following are fixed constraints,
+not planned features:
+
+- **No garbage collector.** Allocation is bump-only and monotonic within a call.  If the
+  buffer fills up the VM returns `VmError::Oom`; the caller must size the buffer for the
+  expected working set.  There is no way to reclaim memory mid-call.
+- **29-bit integers.** Values are 32-bit tagged words; integers occupy 29 bits
+  (-268 435 456 … +268 435 455, wrapping).  Arbitrary-precision arithmetic is not supported.
+- **Byte strings capped at 255 bytes.** The length occupies 8 bits of the value word.
+  Concatenation that would exceed 255 bytes returns `VmError::BytesOverflow`.
+- **No `call/cc` or continuations.** The stack is a plain downward-growing region of the
+  arena; capturing it is not possible with the bump model.
+- **No mutation.** The only write after initial construction is `FIXPOINT`, which patches a
+  single capture slot of a freshly-created closure.  There is no `set!` and no mutable cells.
+- **No macros.** Reader macros (`'`, `` ` ``, `,`) are hardcoded in the parser.  User-defined
+  macros and `syntax-rules` are not supported.
+- **Non-tail call depth capped at 256.** Only tail calls are free; non-tail mutual recursion
+  or deep function composition can hit `VmError::StackOverflow`.
+- **Bytecode is not sandboxed.** The VM trusts that the bytecode blob is well-formed.
+  Malformed or hand-crafted bytecode (invalid jump targets, malformed `MATCH` tables) is
+  not fully bounds-checked and may produce incorrect results.  Only use bytecode produced
+  by the in-tree compiler.
+
 ## Usage
 
 ### 1. Compile Scheme to bytecode
