@@ -35,6 +35,7 @@ pub mod op {
     pub const CALL_DIRECT: u8 = 0x1D;
     pub const TAIL_CALL_DIRECT: u8 = 0x1E;
     pub const FOREIGN_FN_CONST: u8 = 0x1F;
+    pub const LOAD_CAPTURE: u8 = 0x20;
 }
 
 /// Binary encoding helpers used by the compiler to emit bytecode,
@@ -57,6 +58,7 @@ pub mod op {
 ///   CALL_DIRECT       code_addr:u16le  n_args:u8
 ///   TAIL_CALL_DIRECT  code_addr:u16le  n_args:u8
 ///   FOREIGN_FN_CONST  idx:u16le
+///   LOAD_CAPTURE      idx:u8
 
 pub struct Emitter {
     pub code: Vec<u8>,
@@ -212,6 +214,11 @@ impl Emitter {
     pub fn emit_foreign_fn_const(&mut self, idx: u16) {
         self.code.push(op::FOREIGN_FN_CONST);
         self.code.extend_from_slice(&idx.to_le_bytes());
+    }
+
+    pub fn emit_load_capture(&mut self, idx: u8) {
+        self.code.push(op::LOAD_CAPTURE);
+        self.code.push(idx);
     }
 }
 

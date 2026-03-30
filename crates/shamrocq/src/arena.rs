@@ -174,6 +174,22 @@ impl<'a> Arena<'a> {
         self.stack_bot = self.buf.len() - depth * 4;
     }
 
+    pub fn stack_bot_pos(&self) -> usize {
+        self.stack_bot
+    }
+
+    pub fn set_stack_bot_pos(&mut self, pos: usize) {
+        self.stack_bot = pos;
+    }
+
+    pub fn stack_read_at(&self, byte_pos: usize) -> Value {
+        Value::from_raw(self.read_word(byte_pos))
+    }
+
+    pub fn stack_write_at(&mut self, byte_pos: usize, val: Value) {
+        self.write_word(byte_pos, val.raw());
+    }
+
     // -- raw word access (little-endian) --
 
     fn write_word(&mut self, offset: usize, val: u32) {

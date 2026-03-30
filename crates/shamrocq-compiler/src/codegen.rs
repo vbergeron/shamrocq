@@ -38,22 +38,23 @@ struct Compiler {
     flat_patches: Vec<(u16, usize)>,
 }
 
-/// Compile-time context tracking how de Bruijn indices map to LOAD slots.
+enum LoadTarget {
+    Local(u8),
+    Capture(u8),
+}
+
+/// Compile-time context tracking how de Bruijn indices map to instructions.
 ///
-/// Frame layout (bottom to top):
-///   [capture_0, ..., capture_{n-1}, param, bind_0, bind_1, ...]
+/// Frame layout (bottom to top, on the operand stack):
+///   [param, bind_0, bind_1, ...]
 ///
-/// LOAD(idx) indexes from the bottom (idx=0 = capture_0).
-/// De Bruijn index 0 = most recently introduced binding (top of frame).
+/// Captures are NOT on the stack; they live in the closure on the heap and
+/// are accessed via LOAD_CAPTURE through the VM's env register.
 ///
-/// Mapping at frame_depth D, with n_captures N:
-///   - let d = D - N  (locally introduced bindings: param + let/match)
-///   - de Bruijn idx < d  → LOAD(D - 1 - idx)   (local)
-///   - de Bruijn idx >= d → LOAD(capture_slot)   (captured from parent)
-///     where parent_de_bruijn = idx - d, and capture_slot = captures.position(parent_de_bruijn)
+/// LOAD(idx) indexes locals from the bottom (idx=0 = param).
+/// LOAD_CAPTURE(idx) reads capture slot `idx` from the env closure.
 #[derive(Clone)]
 struct Ctx {
-    n_captures: usize,
     captures: Vec<u8>,
     frame_depth: usize,
 }
@@ -61,41 +62,33 @@ struct Ctx {
 impl Ctx {
     fn toplevel() -> Self {
         Ctx {
-            n_captures: 0,
             captures: Vec::new(),
             frame_depth: 0,
         }
     }
 
     fn for_closure(captures: Vec<u8>) -> Self {
-        let n = captures.len();
         Ctx {
-            n_captures: n,
             captures,
-            frame_depth: n + 1, // captures + param
+            frame_depth: 1, // param only; captures accessed via env register
         }
     }
 
     fn for_direct_call(arity: usize) -> Self {
         Ctx {
-            n_captures: 0,
             captures: Vec::new(),
             frame_depth: arity,
         }
     }
 
-    fn local_depth(&self) -> usize {
-        self.frame_depth - self.n_captures
-    }
-
-    fn load_slot(&self, de_bruijn: u8) -> u8 {
+    fn load_target(&self, de_bruijn: u8) -> LoadTarget {
         let idx = de_bruijn as usize;
-        let d = self.local_depth();
-        if idx < d {
-            (self.frame_depth - 1 - idx) as u8
+        if idx < self.frame_depth {
+            LoadTarget::Local((self.frame_depth - 1 - idx) as u8)
         } else {
-            let parent_idx = (idx - d) as u8;
-            self.captures
+            let parent_idx = (idx - self.frame_depth) as u8;
+            let cap_slot = self
+                .captures
                 .iter()
                 .position(|&c| c == parent_idx)
                 .unwrap_or_else(|| {
@@ -103,7 +96,8 @@ impl Ctx {
                         "BUG: free var (parent de Bruijn {}) not in captures {:?}",
                         parent_idx, self.captures
                     )
-                }) as u8
+                }) as u8;
+            LoadTarget::Capture(cap_slot)
         }
     }
 
@@ -222,7 +216,10 @@ impl Compiler {
 
         match expr {
             RExpr::Local(idx) => {
-                self.emitter.emit_load(ctx.load_slot(*idx));
+                match ctx.load_target(*idx) {
+                    LoadTarget::Local(slot) => self.emitter.emit_load(slot),
+                    LoadTarget::Capture(slot) => self.emitter.emit_load_capture(slot),
+                }
                 if tail {
                     self.emitter.emit_ret();
                 }
@@ -376,22 +373,10 @@ impl Compiler {
 
     fn emit_captures(&mut self, free: &[u8], ctx: &Ctx) {
         for &parent_idx in free {
-            let d = ctx.local_depth();
-            let slot = if (parent_idx as usize) < d {
-                (ctx.frame_depth - 1 - parent_idx as usize) as u8
-            } else {
-                let grandparent_idx = parent_idx - d as u8;
-                ctx.captures
-                    .iter()
-                    .position(|&c| c == grandparent_idx)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "BUG: capture parent_idx {} (grandparent {}) not in ctx.captures {:?}",
-                            parent_idx, grandparent_idx, ctx.captures
-                        )
-                    }) as u8
-            };
-            self.emitter.emit_load(slot);
+            match ctx.load_target(parent_idx) {
+                LoadTarget::Local(slot) => self.emitter.emit_load(slot),
+                LoadTarget::Capture(slot) => self.emitter.emit_load_capture(slot),
+            }
         }
     }
 

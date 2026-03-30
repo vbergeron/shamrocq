@@ -96,6 +96,7 @@ mod op {
     pub const CALL_DIRECT: u8 = 0x1D;
     pub const TAIL_CALL_DIRECT: u8 = 0x1E;
     pub const FOREIGN_FN_CONST: u8 = 0x1F;
+    pub const LOAD_CAPTURE: u8 = 0x20;
 }
 
 // ── data types ───────────────────────────────────────────────────────────────
@@ -253,6 +254,7 @@ fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
                 if pc < code.len() { after_term.push(pc as u16); }
             }
             op::FOREIGN_FN_CONST => { pc += 2; }
+            op::LOAD_CAPTURE => { pc += 1; }
             other => {
                 return Err(format!(
                     "unknown opcode 0x{:02X} at code+0x{:04X}",
@@ -540,6 +542,16 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
                     );
                 }
             }
+            op::LOAD_CAPTURE => {
+                let idx = read_u8(code, pc)?;
+                pc += 1;
+                println!(
+                    "  {}{:04X}{}  {}{:<13}{}{:<17}{}; cap.{}{}",
+                    c.dim, instr_pc, c.rst,
+                    c.bld, "LOAD_CAPTURE", c.rst,
+                    idx, c.dim, idx, c.rst
+                );
+            }
             op::GLOBAL => {
                 let idx = read_u16le(code, pc)?;
                 pc += 2;
@@ -689,21 +701,17 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
 
 // ── LOAD annotation ──────────────────────────────────────────────────────────
 
-fn annotate_load(idx: usize, n_captures: usize, n_params: usize, bind_depth: usize) -> String {
-    if n_captures == 0 && n_params == 0 {
+fn annotate_load(idx: usize, _n_captures: usize, n_params: usize, bind_depth: usize) -> String {
+    if n_params == 0 {
         return String::new();
     }
-    if idx < n_captures {
-        return format!("cap.{}", idx);
-    }
-    if idx < n_captures + n_params {
-        let arg_idx = idx - n_captures;
+    if idx < n_params {
         if n_params == 1 {
             return "arg".to_string();
         }
-        return format!("arg.{}", arg_idx);
+        return format!("arg.{}", idx);
     }
-    let let_idx = idx - n_captures - n_params;
+    let let_idx = idx - n_params;
     if let_idx < bind_depth {
         return format!("let.{}", let_idx);
     }

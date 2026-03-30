@@ -37,6 +37,7 @@ mod op {
     pub const CALL_DIRECT: u8 = 0x1D;
     pub const TAIL_CALL_DIRECT: u8 = 0x1E;
     pub const FOREIGN_FN_CONST: u8 = 0x1F;
+    pub const LOAD_CAPTURE: u8 = 0x20;
 }
 
 #[derive(Debug)]
@@ -140,7 +141,10 @@ impl<'a> Program<'a> {
 
 struct CallFrame {
     return_pc: usize,
+    /// Byte position of stack_bot at frame entry (raw byte offset into arena buf).
     frame_base: usize,
+    /// The closure being executed (captures accessed via LOAD_CAPTURE).
+    env: Value,
 }
 
 impl CallFrame {
@@ -148,6 +152,7 @@ impl CallFrame {
         CallFrame {
             return_pc: 0,
             frame_base: 0,
+            env: Value::ctor(0, 0),
         }
     }
 }
@@ -229,18 +234,14 @@ impl<'buf> Vm<'buf> {
                     .ok_or(VmError::InvalidBytecode)?;
                 func = f(self, arg)?;
             } else {
-                let saved_depth = self.arena.stack_depth();
-                let code_addr = if func.is_bare_fn() {
-                    func.code_addr()
+                let saved_pos = self.arena.stack_bot_pos();
+                let (code_addr, env) = if func.is_bare_fn() {
+                    (func.code_addr(), Value::ctor(0, 0))
                 } else {
-                    let n_cap = self.arena.closure_capture_count(func);
-                    for i in 0..n_cap {
-                        self.arena.stack_push(self.arena.closure_capture(func, i))?;
-                    }
-                    self.arena.closure_code(func)
+                    (self.arena.closure_code(func), func)
                 };
                 self.arena.stack_push(arg)?;
-                func = self.eval_with_frame(code_addr as usize, saved_depth)?;
+                func = self.eval_with_frame(code_addr as usize, saved_pos, env)?;
             }
         }
         Ok(func)
@@ -263,14 +264,21 @@ impl<'buf> Vm<'buf> {
     }
 
     fn eval(&mut self, start_pc: usize) -> Result<Value, VmError> {
-        self.eval_with_frame(start_pc, self.arena.stack_depth())
+        let fb = self.arena.stack_bot_pos();
+        self.eval_with_frame(start_pc, fb, Value::ctor(0, 0))
     }
 
-    fn eval_with_frame(&mut self, start_pc: usize, frame_base: usize) -> Result<Value, VmError> {
+    fn eval_with_frame(
+        &mut self,
+        start_pc: usize,
+        frame_base: usize,
+        start_env: Value,
+    ) -> Result<Value, VmError> {
         let code = self.code;
         let mut pc = start_pc;
         let mut call_depth: usize = 0;
         let mut frame_base = frame_base;
+        let mut env = start_env;
 
         loop {
             if pc >= code.len() {
@@ -305,8 +313,15 @@ impl<'buf> Vm<'buf> {
                 op::LOAD => {
                     let idx = code[pc] as usize;
                     pc += 1;
-                    let depth_from_top = self.arena.stack_depth() - frame_base - 1 - idx;
-                    let val = self.arena.stack_peek(depth_from_top);
+                    let val = self.arena.stack_read_at(frame_base - (idx + 1) * 4);
+                    self.arena.stack_push(val)?;
+                    self.record_stack();
+                }
+
+                op::LOAD_CAPTURE => {
+                    let idx = code[pc] as usize;
+                    pc += 1;
+                    let val = self.arena.closure_capture(env, idx);
                     self.arena.stack_push(val)?;
                     self.record_stack();
                 }
@@ -353,19 +368,18 @@ impl<'buf> Vm<'buf> {
                         self.call_stack[call_depth] = CallFrame {
                             return_pc: pc,
                             frame_base,
+                            env,
                         };
                         call_depth += 1;
                         stat!(self, exec_call_count += 1);
                         stat!(self, exec_peak_call_depth = max call_depth as u32);
 
-                        frame_base = self.arena.stack_depth();
+                        frame_base = self.arena.stack_bot_pos();
                         let ca = if func.is_bare_fn() {
+                            env = Value::ctor(0, 0);
                             func.code_addr()
                         } else {
-                            let n_cap = self.arena.closure_capture_count(func);
-                            for i in 0..n_cap {
-                                self.arena.stack_push(self.arena.closure_capture(func, i))?;
-                            }
+                            env = func;
                             self.arena.closure_code(func)
                         };
                         self.arena.stack_push(arg)?;
@@ -384,8 +398,7 @@ impl<'buf> Vm<'buf> {
                         let f = self.foreign_fns[func.foreign_fn_idx() as usize]
                             .ok_or(VmError::InvalidBytecode)?;
                         let result = f(self, arg)?;
-                        // Simulate RET: truncate to our frame base, push result, pop call frame.
-                        self.arena.stack_truncate(frame_base);
+                        self.arena.set_stack_bot_pos(frame_base);
                         self.arena.stack_push(result)?;
                         if call_depth == 0 {
                             return Ok(result);
@@ -393,18 +406,16 @@ impl<'buf> Vm<'buf> {
                         call_depth -= 1;
                         pc = self.call_stack[call_depth].return_pc;
                         frame_base = self.call_stack[call_depth].frame_base;
+                        env = self.call_stack[call_depth].env;
                     } else {
-                        self.arena.stack_truncate(frame_base);
+                        self.arena.set_stack_bot_pos(frame_base);
                         stat!(self, exec_tail_call_count += 1);
 
-                        frame_base = self.arena.stack_depth();
                         let ca = if func.is_bare_fn() {
+                            env = Value::ctor(0, 0);
                             func.code_addr()
                         } else {
-                            let n_cap = self.arena.closure_capture_count(func);
-                            for i in 0..n_cap {
-                                self.arena.stack_push(self.arena.closure_capture(func, i))?;
-                            }
+                            env = func;
                             self.arena.closure_code(func)
                         };
                         self.arena.stack_push(arg)?;
@@ -415,7 +426,7 @@ impl<'buf> Vm<'buf> {
 
                 op::RET => {
                     let result = self.arena.stack_pop();
-                    self.arena.stack_truncate(frame_base);
+                    self.arena.set_stack_bot_pos(frame_base);
                     self.arena.stack_push(result)?;
 
                     if call_depth == 0 {
@@ -424,6 +435,7 @@ impl<'buf> Vm<'buf> {
                     call_depth -= 1;
                     pc = self.call_stack[call_depth].return_pc;
                     frame_base = self.call_stack[call_depth].frame_base;
+                    env = self.call_stack[call_depth].env;
                 }
 
                 op::MATCH => {
@@ -456,7 +468,7 @@ impl<'buf> Vm<'buf> {
                     }
 
                     if !matched {
-                        return Err(VmError::MatchFailure { scrutinee_tag: scrutinee_tag, pc });
+                        return Err(VmError::MatchFailure { scrutinee_tag, pc });
                     }
                 }
 
@@ -478,16 +490,16 @@ impl<'buf> Vm<'buf> {
                 op::DROP => {
                     let n = code[pc] as usize;
                     pc += 1;
-                    let depth = self.arena.stack_depth();
-                    self.arena.stack_truncate(depth - n);
+                    let bot = self.arena.stack_bot_pos();
+                    self.arena.set_stack_bot_pos(bot + n * 4);
                 }
 
                 op::SLIDE => {
                     let n = code[pc] as usize;
                     pc += 1;
                     let result = self.arena.stack_pop();
-                    let depth = self.arena.stack_depth();
-                    self.arena.stack_truncate(depth - n);
+                    let bot = self.arena.stack_bot_pos();
+                    self.arena.set_stack_bot_pos(bot + n * 4);
                     self.arena.stack_push(result)?;
                 }
 
@@ -617,11 +629,13 @@ impl<'buf> Vm<'buf> {
                     self.call_stack[call_depth] = CallFrame {
                         return_pc: pc,
                         frame_base,
+                        env,
                     };
                     call_depth += 1;
                     stat!(self, exec_direct_call_count += 1);
                     stat!(self, exec_peak_call_depth = max call_depth as u32);
-                    frame_base = self.arena.stack_depth() - n_args;
+                    frame_base = self.arena.stack_bot_pos() + n_args * 4;
+                    env = Value::ctor(0, 0);
                     pc = code_addr as usize;
                 }
 
@@ -633,12 +647,13 @@ impl<'buf> Vm<'buf> {
                     for i in (0..n_args).rev() {
                         args_buf[i] = self.arena.stack_pop();
                     }
-                    self.arena.stack_truncate(frame_base);
+                    self.arena.set_stack_bot_pos(frame_base);
                     for i in 0..n_args {
-                        self.arena.stack_push(args_buf[i])?;
+                        self.arena.stack_write_at(frame_base - (i + 1) * 4, args_buf[i]);
                     }
+                    self.arena.set_stack_bot_pos(frame_base - n_args * 4);
                     self.record_stack();
-                    frame_base = self.arena.stack_depth() - n_args;
+                    env = Value::ctor(0, 0);
                     pc = code_addr as usize;
                 }
 
