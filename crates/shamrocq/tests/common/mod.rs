@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-#[cfg(feature = "integration")]
-use shamrocq::{ctors, BYTECODE};
 use shamrocq::{Value, Vm};
 
 use shamrocq_compiler::codegen::compile_program;
@@ -14,6 +12,17 @@ use std::collections::HashMap;
 pub struct Compiled {
     pub blob: Vec<u8>,
     pub funcs: HashMap<String, u16>,
+    pub tags: HashMap<String, u8>,
+}
+
+impl Compiled {
+    pub fn tag(&self, name: &str) -> u8 {
+        self.tags[name]
+    }
+
+    pub fn func(&self, name: &str) -> u16 {
+        self.funcs[name]
+    }
 }
 
 pub fn compile_scheme(files: &[&str]) -> Compiled {
@@ -35,13 +44,50 @@ pub fn compile_scheme(files: &[&str]) -> Compiled {
     let funcs = prog.header.globals.iter().enumerate()
         .map(|(i, (name, _))| (name.clone(), i as u16))
         .collect();
-    Compiled { blob: prog.serialize(), funcs }
+    let tag_map = tags.entries().iter()
+        .map(|(name, id)| (name.clone(), *id))
+        .collect();
+    Compiled { blob: prog.serialize(), funcs, tags: tag_map }
 }
 
-#[cfg(feature = "integration")]
-pub fn setup() -> (Vec<u8>, &'static [u8]) {
+pub fn setup(files: &[&str]) -> (Compiled, Vec<u8>, Vm<'static>) {
+    let c = compile_scheme(files);
     let buf = vec![0u8; 65536];
-    (buf, BYTECODE)
+    (c, buf, unsafe { std::mem::zeroed() })
+}
+
+pub fn peano(vm: &mut Vm, tag_o: u8, tag_s: u8, n: u32) -> Value {
+    let mut v = Value::ctor(tag_o, 0);
+    for _ in 0..n {
+        v = vm.alloc_ctor(tag_s, &[v]).unwrap();
+    }
+    v
+}
+
+pub fn unpeano(vm: &Vm, tag_s: u8, mut v: Value) -> u32 {
+    let mut n = 0;
+    while v.tag() == tag_s {
+        v = vm.ctor_field(v, 0);
+        n += 1;
+    }
+    n
+}
+
+pub fn list_to_vec(vm: &Vm, tag_cons: u8, mut v: Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    while v.tag() == tag_cons {
+        out.push(vm.ctor_field(v, 0));
+        v = vm.ctor_field(v, 1);
+    }
+    out
+}
+
+pub fn make_list(vm: &mut Vm, tag_nil: u8, tag_cons: u8, items: &[Value]) -> Value {
+    let mut list = Value::ctor(tag_nil, 0);
+    for &item in items.iter().rev() {
+        list = vm.alloc_ctor(tag_cons, &[item, list]).unwrap();
+    }
+    list
 }
 
 #[cfg(feature = "stats")]
@@ -86,41 +132,3 @@ pub fn print_stats(name: &str, vm: &Vm) {
 
 #[cfg(not(feature = "stats"))]
 pub fn print_stats(_name: &str, _vm: &Vm) {}
-
-#[cfg(feature = "integration")]
-pub fn peano(vm: &mut Vm, n: u32) -> Value {
-    let mut v = Value::ctor(ctors::O, 0);
-    for _ in 0..n {
-        v = vm.alloc_ctor(ctors::S, &[v]).unwrap();
-    }
-    v
-}
-
-#[cfg(feature = "integration")]
-pub fn unpeano(vm: &Vm, mut v: Value) -> u32 {
-    let mut n = 0;
-    while v.tag() == ctors::S {
-        v = vm.ctor_field(v, 0);
-        n += 1;
-    }
-    n
-}
-
-#[cfg(feature = "integration")]
-pub fn list_to_vec(vm: &Vm, mut v: Value) -> Vec<Value> {
-    let mut out = Vec::new();
-    while v.tag() == ctors::CONS {
-        out.push(vm.ctor_field(v, 0));
-        v = vm.ctor_field(v, 1);
-    }
-    out
-}
-
-#[cfg(feature = "integration")]
-pub fn make_list(vm: &mut Vm, items: &[Value]) -> Value {
-    let mut list = Value::ctor(ctors::NIL, 0);
-    for &item in items.iter().rev() {
-        list = vm.alloc_ctor(ctors::CONS, &[item, list]).unwrap();
-    }
-    list
-}

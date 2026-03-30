@@ -42,7 +42,7 @@ BENCHMARK_TIMESTAMP="$TIMESTAMP" \
     cargo test \
         --manifest-path "$REPO_ROOT/Cargo.toml" \
         --package shamrocq \
-        --features integration,stats \
+        --features stats \
         -- --test-threads=1 2>&1
 
 echo ""

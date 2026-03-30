@@ -1,119 +1,128 @@
-#![cfg(feature = "integration")]
-
 mod common;
 
-use common::{setup, peano, unpeano, print_stats};
-use shamrocq::{tags, ctors, funcs, Program, Value, Vm};
+use common::{compile_scheme, peano, unpeano, print_stats, Compiled};
+use shamrocq::{Program, Value, Vm};
+
+fn setup() -> Compiled {
+    compile_scheme(&["hash_forest.scm", "synth_option.scm"])
+}
 
 #[test]
 fn option_map_some() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let negb = vm.global_value(funcs::NEGB);
-    let some_true = vm.alloc_ctor(ctors::SOME, &[Value::ctor(tags::TRUE, 0)]).unwrap();
-    let result = vm.call(funcs::OPTION_MAP, &[negb, some_true]).unwrap();
-    assert_eq!(result.tag(), ctors::SOME);
-    assert_eq!(vm.ctor_field(result, 0).tag(), tags::FALSE);
+    let negb = vm.global_value(c.func("negb"));
+    let some_true = vm.alloc_ctor(c.tag("Some"), &[Value::ctor(c.tag("True"), 0)]).unwrap();
+    let result = vm.call(c.func("option_map"), &[negb, some_true]).unwrap();
+    assert_eq!(result.tag(), c.tag("Some"));
+    assert_eq!(vm.ctor_field(result, 0).tag(), c.tag("False"));
     print_stats("option_map(negb, Some(True))", &vm);
 }
 
 #[test]
 fn option_map_none() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let negb = vm.global_value(funcs::NEGB);
-    let none = Value::ctor(ctors::NONE_, 0);
-    let result = vm.call(funcs::OPTION_MAP, &[negb, none]).unwrap();
-    assert_eq!(result.tag(), ctors::NONE_);
+    let negb = vm.global_value(c.func("negb"));
+    let none = Value::ctor(c.tag("None_"), 0);
+    let result = vm.call(c.func("option_map"), &[negb, none]).unwrap();
+    assert_eq!(result.tag(), c.tag("None_"));
     print_stats("option_map(negb, None)", &vm);
 }
 
 #[test]
 fn option_bind_some() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
     // option_bind(wrap_some, Some(True)) = wrap_some(True) = Some(True)
-    let wrap = vm.global_value(funcs::WRAP_SOME);
-    let some_true = vm.alloc_ctor(ctors::SOME, &[Value::ctor(tags::TRUE, 0)]).unwrap();
-    let result = vm.call(funcs::OPTION_BIND, &[wrap, some_true]).unwrap();
-    assert_eq!(result.tag(), ctors::SOME);
-    assert_eq!(vm.ctor_field(result, 0).tag(), tags::TRUE);
+    let wrap = vm.global_value(c.func("wrap_some"));
+    let some_true = vm.alloc_ctor(c.tag("Some"), &[Value::ctor(c.tag("True"), 0)]).unwrap();
+    let result = vm.call(c.func("option_bind"), &[wrap, some_true]).unwrap();
+    assert_eq!(result.tag(), c.tag("Some"));
+    assert_eq!(vm.ctor_field(result, 0).tag(), c.tag("True"));
     print_stats("option_bind(wrap_some, Some(True))", &vm);
 }
 
 #[test]
 fn option_bind_none() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let negb = vm.global_value(funcs::NEGB);
-    let none = Value::ctor(ctors::NONE_, 0);
-    let result = vm.call(funcs::OPTION_BIND, &[negb, none]).unwrap();
-    assert_eq!(result.tag(), ctors::NONE_);
+    let negb = vm.global_value(c.func("negb"));
+    let none = Value::ctor(c.tag("None_"), 0);
+    let result = vm.call(c.func("option_bind"), &[negb, none]).unwrap();
+    assert_eq!(result.tag(), c.tag("None_"));
     print_stats("option_bind(negb, None)", &vm);
 }
 
 #[test]
 fn option_default_some() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n5 = peano(&mut vm, 5);
-    let n0 = peano(&mut vm, 0);
-    let some_5 = vm.alloc_ctor(ctors::SOME, &[n5]).unwrap();
-    let result = vm.call(funcs::OPTION_DEFAULT, &[n0, some_5]).unwrap();
-    assert_eq!(unpeano(&vm, result), 5);
+    let n5 = peano(&mut vm, c.tag("O"), c.tag("S"), 5);
+    let n0 = peano(&mut vm, c.tag("O"), c.tag("S"), 0);
+    let some_5 = vm.alloc_ctor(c.tag("Some"), &[n5]).unwrap();
+    let result = vm.call(c.func("option_default"), &[n0, some_5]).unwrap();
+    assert_eq!(unpeano(&vm, c.tag("S"), result), 5);
     print_stats("option_default(0, Some(5))", &vm);
 }
 
 #[test]
 fn option_default_none() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = peano(&mut vm, 0);
-    let none = Value::ctor(ctors::NONE_, 0);
-    let result = vm.call(funcs::OPTION_DEFAULT, &[n0, none]).unwrap();
-    assert_eq!(unpeano(&vm, result), 0);
+    let n0 = peano(&mut vm, c.tag("O"), c.tag("S"), 0);
+    let none = Value::ctor(c.tag("None_"), 0);
+    let result = vm.call(c.func("option_default"), &[n0, none]).unwrap();
+    assert_eq!(unpeano(&vm, c.tag("S"), result), 0);
     print_stats("option_default(0, None)", &vm);
 }
 
 #[test]
 fn option_is_some_and_none() {
-    let (mut buf, bytecode) = setup();
-    let prog = Program::from_blob(bytecode).unwrap();
+    let c = setup();
+    let prog = Program::from_blob(&c.blob).unwrap();
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let some = vm.alloc_ctor(ctors::SOME, &[Value::ctor(ctors::O, 0)]).unwrap();
-    let none = Value::ctor(ctors::NONE_, 0);
+    let some = vm.alloc_ctor(c.tag("Some"), &[Value::ctor(c.tag("O"), 0)]).unwrap();
+    let none = Value::ctor(c.tag("None_"), 0);
 
-    let r1 = vm.call(funcs::OPTION_IS_SOME, &[some]).unwrap();
-    assert_eq!(r1.tag(), tags::TRUE);
+    let r1 = vm.call(c.func("option_is_some"), &[some]).unwrap();
+    assert_eq!(r1.tag(), c.tag("True"));
 
-    let r2 = vm.call(funcs::OPTION_IS_SOME, &[none]).unwrap();
-    assert_eq!(r2.tag(), tags::FALSE);
+    let r2 = vm.call(c.func("option_is_some"), &[none]).unwrap();
+    assert_eq!(r2.tag(), c.tag("False"));
 
-    let r3 = vm.call(funcs::OPTION_IS_NONE, &[none]).unwrap();
-    assert_eq!(r3.tag(), tags::TRUE);
+    let r3 = vm.call(c.func("option_is_none"), &[none]).unwrap();
+    assert_eq!(r3.tag(), c.tag("True"));
 
-    let r4 = vm.call(funcs::OPTION_IS_NONE, &[some]).unwrap();
-    assert_eq!(r4.tag(), tags::FALSE);
+    let r4 = vm.call(c.func("option_is_none"), &[some]).unwrap();
+    assert_eq!(r4.tag(), c.tag("False"));
 
     print_stats("option_is_some/none", &vm);
 }

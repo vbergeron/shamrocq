@@ -17,6 +17,26 @@
       ((O) `(Some ,x))
       ((S n~) (@ nth n~ xs)))))))
 
+(define list_map (lambdas (f l)
+  (match l
+    ((Nil) `(Nil))
+    ((Cons x xs) `(Cons ,(f x) ,(@ list_map f xs))))))
+
+(define list_filter (lambdas (f l)
+  (match l
+    ((Nil) `(Nil))
+    ((Cons x xs)
+      (match (f x)
+        ((True) `(Cons ,x ,(@ list_filter f xs)))
+        ((False) (@ list_filter f xs)))))))
+
+(define lrange (lambdas (lo hi)
+  (if (< lo hi)
+    `(Cons ,lo ,(@ lrange (+ lo 1) hi))
+    `(Nil))))
+
+(define is_positive (lambda (x) (< 0 x)))
+
 (define zip (lambdas (l1 l2)
   (match l1
     ((Nil) `(Nil))
