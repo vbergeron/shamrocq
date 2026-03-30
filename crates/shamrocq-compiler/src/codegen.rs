@@ -74,6 +74,9 @@ struct DeferredLambda {
     body: RExpr,
     captures: Vec<u8>,
     closure_code_addr_pos: usize,
+    /// When set, this closure is part of the curry chain for the given global.
+    /// The innermost closure emits a wrapper that tail-calls the direct variant.
+    wrapper_global: Option<u16>,
 }
 
 struct Compiler {
@@ -82,6 +85,8 @@ struct Compiler {
     last_closure_captures: Option<Vec<u8>>,
     arities: Vec<u8>,
     flat_patches: Vec<(u16, usize)>,
+    /// Propagates through the curry chain so the innermost closure can emit a wrapper.
+    pending_wrapper: Option<u16>,
 }
 
 enum LoadTarget {
@@ -165,14 +170,18 @@ pub fn compile_program(defs: &[RDefine]) -> CompiledProgram {
         last_closure_captures: None,
         arities,
         flat_patches: Vec::new(),
+        pending_wrapper: None,
     };
 
     let mut global_offsets: Vec<(String, u16)> = Vec::new();
 
-    for def in defs {
+    for (i, def) in defs.iter().enumerate() {
         let offset = c.emitter.pos() as u16;
         global_offsets.push((def.name.clone(), offset));
         let mut ctx = Ctx::toplevel();
+        if c.arities[i] > 1 {
+            c.pending_wrapper = Some(i as u16);
+        }
         c.compile_expr(&def.body, &mut ctx, true);
     }
 
@@ -302,10 +311,12 @@ impl Compiler {
 
                 self.last_closure_captures = Some(free.clone());
 
+                let wrapper = self.pending_wrapper.take();
                 self.deferred.push(DeferredLambda {
                     body: (**body).clone(),
                     captures: free,
                     closure_code_addr_pos: code_addr_pos,
+                    wrapper_global: wrapper,
                 });
 
                 if tail {
@@ -482,6 +493,28 @@ impl Compiler {
             for dl in batch {
                 let body_addr = self.emitter.pos() as u16;
                 self.emitter.patch_u16(dl.closure_code_addr_pos, body_addr);
+
+                if let Some(global_idx) = dl.wrapper_global {
+                    if !matches!(dl.body, RExpr::Lambda(_)) {
+                        let arity = self.arities[global_idx as usize];
+                        let n_captures = arity as usize - 1;
+                        let captures_ok = dl.captures.len() == n_captures
+                            && dl.captures.iter().enumerate().all(|(i, &c)| c == i as u8);
+                        if captures_ok {
+                            for i in (0..n_captures).rev() {
+                                self.emitter.emit_load_capture(i as u8);
+                            }
+                            self.emitter.emit_load(0);
+                            self.emitter.emit_tail_call_direct(0, arity);
+                            let patch_pos = self.emitter.pos() - 3;
+                            self.flat_patches.push((global_idx, patch_pos));
+                            continue;
+                        }
+                    } else {
+                        self.pending_wrapper = Some(global_idx);
+                    }
+                }
+
                 let mut ctx = Ctx::for_closure(dl.captures);
                 self.compile_expr(&dl.body, &mut ctx, true);
             }
