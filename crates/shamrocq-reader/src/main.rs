@@ -65,8 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 // ── opcodes ──────────────────────────────────────────────────────────────────
 
 mod op {
-    pub const CTOR0: u8 = 0x01;
-    pub const CTOR: u8 = 0x02;
+    pub const PACK: u8 = 0x01;
+    pub const UNPACK: u8 = 0x02;
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
@@ -97,6 +97,8 @@ mod op {
     pub const TAIL_CALL_DIRECT: u8 = 0x1E;
     pub const FOREIGN_FN_CONST: u8 = 0x1F;
     pub const LOAD_CAPTURE: u8 = 0x20;
+    pub const LOAD2: u8 = 0x21;
+    pub const LOAD3: u8 = 0x22;
 }
 
 // ── data types ───────────────────────────────────────────────────────────────
@@ -201,9 +203,11 @@ fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
         pc += 1;
 
         match opcode {
-            op::CTOR0 => { pc += 1; }
-            op::CTOR => { pc += 2; }
+            op::PACK => { pc += 2; }
+            op::UNPACK => { pc += 1; }
             op::LOAD => { pc += 1; }
+            op::LOAD2 => { pc += 2; }
+            op::LOAD3 => { pc += 3; }
             op::GLOBAL => { pc += 2; }
             op::CLOSURE => {
                 let target = u16::from_le_bytes([code[pc], code[pc + 1]]);
@@ -516,16 +520,17 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
         }
 
         match opcode {
-            op::CTOR0 => {
-                let tag = read_u8(code, pc)?;
-                pc += 1;
-                instr!(instr_pc, "CTOR0", "{}", fmt_tag(tag, &tag_names, c));
-            }
-            op::CTOR => {
+            op::PACK => {
                 let tag = read_u8(code, pc)?;
                 let arity = read_u8(code, pc + 1)?;
                 pc += 2;
-                instr!(instr_pc, "CTOR", "{} arity={}", fmt_tag(tag, &tag_names, c), arity);
+                instr!(instr_pc, "PACK", "{} arity={}", fmt_tag(tag, &tag_names, c), arity);
+            }
+            op::UNPACK => {
+                let n = read_u8(code, pc)?;
+                pc += 1;
+                bind_depth += n as usize;
+                instr!(instr_pc, "UNPACK", "{}", n);
             }
             op::LOAD => {
                 let idx = read_u8(code, pc)?;
@@ -539,6 +544,50 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
                         c.dim, instr_pc, c.rst,
                         c.bld, "LOAD", c.rst,
                         idx, c.dim, annot, c.rst
+                    );
+                }
+            }
+            op::LOAD2 => {
+                let idx_a = read_u8(code, pc)?;
+                let idx_b = read_u8(code, pc + 1)?;
+                pc += 2;
+                let annot_a = annotate_load(idx_a as usize, n_captures, n_params, bind_depth);
+                let annot_b = annotate_load(idx_b as usize, n_captures, n_params, bind_depth);
+                let annot = match (annot_a.is_empty(), annot_b.is_empty()) {
+                    (true, true) => String::new(),
+                    _ => format!("; {}, {}", annot_a, annot_b),
+                };
+                if annot.is_empty() {
+                    instr!(instr_pc, "LOAD2", "{} {}", idx_a, idx_b);
+                } else {
+                    println!(
+                        "  {}{:04X}{}  {}{:<13}{}{} {:<14}{}{}{}",
+                        c.dim, instr_pc, c.rst,
+                        c.bld, "LOAD2", c.rst,
+                        idx_a, idx_b, c.dim, annot, c.rst
+                    );
+                }
+            }
+            op::LOAD3 => {
+                let idx_a = read_u8(code, pc)?;
+                let idx_b = read_u8(code, pc + 1)?;
+                let idx_c = read_u8(code, pc + 2)?;
+                pc += 3;
+                let annot_a = annotate_load(idx_a as usize, n_captures, n_params, bind_depth);
+                let annot_b = annotate_load(idx_b as usize, n_captures, n_params, bind_depth);
+                let annot_c = annotate_load(idx_c as usize, n_captures, n_params, bind_depth);
+                let annot = match (annot_a.is_empty(), annot_b.is_empty(), annot_c.is_empty()) {
+                    (true, true, true) => String::new(),
+                    _ => format!("; {}, {}, {}", annot_a, annot_b, annot_c),
+                };
+                if annot.is_empty() {
+                    instr!(instr_pc, "LOAD3", "{} {} {}", idx_a, idx_b, idx_c);
+                } else {
+                    println!(
+                        "  {}{:04X}{}  {}{:<13}{}{} {} {:<12}{}{}{}",
+                        c.dim, instr_pc, c.rst,
+                        c.bld, "LOAD3", c.rst,
+                        idx_a, idx_b, idx_c, c.dim, annot, c.rst
                     );
                 }
             }

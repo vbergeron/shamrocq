@@ -353,13 +353,15 @@ Like `CALL_DIRECT` but in tail position. Saves the `n_args` values, truncates th
 
 ## Generated companion files
 
-The compiler (both the CLI and `build.rs`) also emits two Rust source files
+The compiler (both the CLI and `build.rs`) also emits a Rust source file
 alongside `bytecode.bin`:
 
-- **`funcs.rs`** — one `pub const NAME: u16 = idx;` per global, mapping
-  function names to their slot index.
-- **`ctors.rs`** — one `pub const NAME: u8 = id;` per Scheme-defined
-  constructor tag.
+- **`bindings.rs`** — contains three modules:
+  - `pub mod funcs` — one `pub const NAME: u16 = idx;` per global, mapping
+    function names to their slot index.
+  - `pub mod ctors` — one `pub const NAME: u8 = id;` per Scheme-defined
+    constructor tag.
+  - `pub mod foreign` — one `pub const NAME: u16 = idx;` per foreign function.
 
-These are meant to be `include!`'d in the consuming crate so that call sites
+This is meant to be `include!`'d in the consuming crate so that call sites
 use symbolic names (`funcs::APPEND`) rather than raw integers.

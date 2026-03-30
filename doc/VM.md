@@ -52,7 +52,7 @@ available (defined in `value::tags`):
 | `PAIR`  | 8 | 2 |
 
 Additional tags are assigned at compile time by the resolver's `TagTable`
-and emitted in `ctors.rs`.
+and emitted in the `ctors` module inside `bindings.rs`.
 
 ## Arena
 

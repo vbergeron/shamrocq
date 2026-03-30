@@ -25,8 +25,8 @@ The compiler automatically generates a curried 3-arg Scheme wrapper that packs
 index with `vm.ctor_field()`.
 
 Declaration order determines the registration index (0, 1, 2, …). The
-compiler writes these indices to `foreign_fns.rs` alongside the usual
-`funcs.rs` and `ctors.rs`.
+compiler writes these indices to the `foreign` module inside `bindings.rs`,
+alongside the `funcs` and `ctors` modules.
 
 ## Using the function from Scheme
 

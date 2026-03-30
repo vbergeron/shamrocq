@@ -22,6 +22,52 @@ impl CompiledProgram {
     pub fn header_len(&self) -> usize {
         self.header.serialized_len()
     }
+
+    pub fn emit_artifacts(
+        &self,
+        tags: &crate::resolve::TagTable,
+        dir: &std::path::Path,
+    ) -> Result<(), std::io::Error> {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(dir.join("bytecode.bin"), self.serialize())?;
+
+        let mut s = String::new();
+
+        s.push_str("pub mod funcs {\n");
+        for (i, (name, _)) in self.header.globals.iter().enumerate() {
+            s.push_str(&format!(
+                "    #[allow(dead_code)]\n    pub const {}: u16 = {};\n",
+                rust_const_name(name), i,
+            ));
+        }
+        s.push_str("}\n\n");
+
+        s.push_str("pub mod ctors {\n");
+        for (name, id) in tags.entries() {
+            s.push_str(&format!(
+                "    #[allow(dead_code)]\n    pub const {}: u8 = {};\n",
+                rust_const_name(&name), id,
+            ));
+        }
+        s.push_str("}\n\n");
+
+        s.push_str("pub mod foreign {\n");
+        for (name, idx) in &self.foreign_fns {
+            s.push_str(&format!(
+                "    #[allow(dead_code)]\n    pub const {}: u16 = {};\n",
+                rust_const_name(name), idx,
+            ));
+        }
+        s.push_str("}\n");
+
+        std::fs::write(dir.join("bindings.rs"), &s)?;
+
+        Ok(())
+    }
+}
+
+fn rust_const_name(name: &str) -> String {
+    name.to_uppercase().replace('-', "_")
 }
 
 struct DeferredLambda {
@@ -233,14 +279,10 @@ impl Compiler {
             }
 
             RExpr::Ctor(tag, fields) => {
-                if fields.is_empty() {
-                    self.emitter.emit_ctor0(*tag);
-                } else {
-                    for f in fields {
-                        self.compile_expr(f, ctx, false);
-                    }
-                    self.emitter.emit_ctor(*tag, fields.len() as u8);
+                for f in fields {
+                    self.compile_expr(f, ctx, false);
                 }
+                self.emitter.emit_pack(*tag, fields.len() as u8);
                 if tail {
                     self.emitter.emit_ret();
                 }
@@ -293,7 +335,7 @@ impl Compiler {
 
             RExpr::Letrec(val, body) => {
                 // Push a dummy value for the letrec binding slot.
-                self.emitter.emit_ctor0(0);
+                self.emitter.emit_pack(0, 0);
                 ctx.push_bindings(1);
 
                 // Compile val (expected to be a Lambda that captures itself).
@@ -381,6 +423,23 @@ impl Compiler {
     }
 
     fn compile_match(&mut self, cases: &[RMatchCase], ctx: &mut Ctx, tail: bool) {
+        if cases.len() == 1 {
+            let case = &cases[0];
+            if case.arity > 0 {
+                self.emitter.emit_unpack(case.arity);
+                ctx.push_bindings(case.arity as usize);
+                self.compile_expr(&case.body, ctx, tail);
+                ctx.pop_bindings(case.arity as usize);
+                if !tail {
+                    self.emitter.emit_slide(case.arity);
+                }
+            } else {
+                self.emitter.emit_drop(1);
+                self.compile_expr(&case.body, ctx, tail);
+            }
+            return;
+        }
+
         let n = cases.len() as u8;
         let table_start = self.emitter.emit_match_header(n);
 

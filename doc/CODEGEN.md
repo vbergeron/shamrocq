@@ -30,7 +30,7 @@ Source files: `crates/shamrocq-compiler/src/{parser,desugar,resolve,codegen,byte
  └────┬─────┘
       │
       ▼
-  bytecode.bin + funcs.rs + ctors.rs
+  bytecode.bin + bindings.rs
 ```
 
 ---

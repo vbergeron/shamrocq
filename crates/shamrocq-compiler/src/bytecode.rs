@@ -4,8 +4,8 @@
 /// inline operands of fixed size per opcode. All multi-byte operands are
 /// little-endian.
 pub mod op {
-    pub const CTOR0: u8 = 0x01;
-    pub const CTOR: u8 = 0x02;
+    pub const PACK: u8 = 0x01;
+    pub const UNPACK: u8 = 0x02;
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
@@ -36,14 +36,16 @@ pub mod op {
     pub const TAIL_CALL_DIRECT: u8 = 0x1E;
     pub const FOREIGN_FN_CONST: u8 = 0x1F;
     pub const LOAD_CAPTURE: u8 = 0x20;
+    pub const LOAD2: u8 = 0x21;
+    pub const LOAD3: u8 = 0x22;
 }
 
 /// Binary encoding helpers used by the compiler to emit bytecode,
 /// and by the runtime to decode it.
 ///
 /// Instruction layouts:
-///   CTOR0     tag:u8
-///   CTOR      tag:u8  arity:u8
+///   PACK      tag:u8  arity:u8
+///   UNPACK    n:u8
 ///   LOAD      idx:u8
 ///   GLOBAL    idx:u16le
 ///   CLOSURE   code_addr:u16le  n_captures:u8
@@ -59,62 +61,101 @@ pub mod op {
 ///   TAIL_CALL_DIRECT  code_addr:u16le  n_args:u8
 ///   FOREIGN_FN_CONST  idx:u16le
 ///   LOAD_CAPTURE      idx:u8
+///   LOAD2             idx_a:u8  idx_b:u8
+///   LOAD3             idx_a:u8  idx_b:u8  idx_c:u8
 
 pub struct Emitter {
     pub code: Vec<u8>,
+    pending_loads: Vec<u8>,
 }
 
 impl Emitter {
     pub fn new() -> Self {
-        Emitter { code: Vec::new() }
+        Emitter { code: Vec::new(), pending_loads: Vec::new() }
     }
 
     pub fn pos(&self) -> usize {
+        debug_assert!(self.pending_loads.is_empty(), "pos() called with pending LOADs");
         self.code.len()
     }
 
-    pub fn emit_ctor0(&mut self, tag: u8) {
-        self.code.push(op::CTOR0);
-        self.code.push(tag);
+    fn flush_pending_loads(&mut self) {
+        let loads = &self.pending_loads;
+        let mut i = 0;
+        while i < loads.len() {
+            let remaining = loads.len() - i;
+            if remaining >= 3 {
+                self.code.push(op::LOAD3);
+                self.code.push(loads[i]);
+                self.code.push(loads[i + 1]);
+                self.code.push(loads[i + 2]);
+                i += 3;
+            } else if remaining >= 2 {
+                self.code.push(op::LOAD2);
+                self.code.push(loads[i]);
+                self.code.push(loads[i + 1]);
+                i += 2;
+            } else {
+                self.code.push(op::LOAD);
+                self.code.push(loads[i]);
+                i += 1;
+            }
+        }
+        self.pending_loads.clear();
     }
 
-    pub fn emit_ctor(&mut self, tag: u8, arity: u8) {
-        self.code.push(op::CTOR);
+    pub fn emit_pack(&mut self, tag: u8, arity: u8) {
+        self.flush_pending_loads();
+        self.code.push(op::PACK);
         self.code.push(tag);
         self.code.push(arity);
     }
 
+    pub fn emit_unpack(&mut self, n: u8) {
+        self.flush_pending_loads();
+        self.code.push(op::UNPACK);
+        self.code.push(n);
+    }
+
     pub fn emit_load(&mut self, idx: u8) {
-        self.code.push(op::LOAD);
-        self.code.push(idx);
+        self.pending_loads.push(idx);
+        if self.pending_loads.len() >= 3 {
+            self.flush_pending_loads();
+        }
     }
 
     pub fn emit_global(&mut self, idx: u16) {
+        self.flush_pending_loads();
         self.code.push(op::GLOBAL);
         self.code.extend_from_slice(&idx.to_le_bytes());
     }
 
     pub fn emit_closure(&mut self, code_addr: u16, n_captures: u8) {
+        self.flush_pending_loads();
         self.code.push(op::CLOSURE);
         self.code.extend_from_slice(&code_addr.to_le_bytes());
         self.code.push(n_captures);
     }
 
     pub fn emit_call(&mut self) {
+        self.flush_pending_loads();
         self.code.push(op::CALL);
     }
 
     pub fn emit_tail_call(&mut self) {
+        self.flush_pending_loads();
         self.code.push(op::TAIL_CALL);
     }
 
     pub fn emit_ret(&mut self) {
+        self.flush_pending_loads();
         self.code.push(op::RET);
     }
 
     /// Emits a MATCH header. Returns the position of the case table
     /// so callers can patch jump offsets after emitting branches.
     pub fn emit_match_header(&mut self, n_cases: u8) -> usize {
+        self.flush_pending_loads();
         self.code.push(op::MATCH);
         self.code.push(n_cases);
         let table_start = self.code.len();
@@ -132,12 +173,14 @@ impl Emitter {
     }
 
     pub fn emit_jmp(&mut self, offset: u16) {
+        self.flush_pending_loads();
         self.code.push(op::JMP);
         self.code.extend_from_slice(&offset.to_le_bytes());
     }
 
     /// Emits JMP with a placeholder. Returns position of the offset for patching.
     pub fn emit_jmp_placeholder(&mut self) -> usize {
+        self.flush_pending_loads();
         self.code.push(op::JMP);
         let pos = self.code.len();
         self.code.extend_from_slice(&[0u8; 2]);
@@ -149,22 +192,26 @@ impl Emitter {
     }
 
     pub fn emit_bind(&mut self, n: u8) {
+        self.flush_pending_loads();
         self.code.push(op::BIND);
         self.code.push(n);
     }
 
     pub fn emit_drop(&mut self, n: u8) {
+        self.flush_pending_loads();
         self.code.push(op::DROP);
         self.code.push(n);
     }
 
     /// Keep top-of-stack, remove n items below it.
     pub fn emit_slide(&mut self, n: u8) {
+        self.flush_pending_loads();
         self.code.push(op::SLIDE);
         self.code.push(n);
     }
 
     pub fn emit_error(&mut self) {
+        self.flush_pending_loads();
         self.code.push(op::ERROR);
     }
 
@@ -172,51 +219,58 @@ impl Emitter {
     /// capture[cap_idx] to point to itself, overwrite the slot
     /// 1 below TOS with the closure, then pop TOS.
     pub fn emit_fixpoint(&mut self, cap_idx: u8) {
+        self.flush_pending_loads();
         self.code.push(op::FIXPOINT);
         self.code.push(cap_idx);
     }
 
     pub fn emit_int_const(&mut self, n: i32) {
+        self.flush_pending_loads();
         self.code.push(op::INT_CONST);
         self.code.extend_from_slice(&n.to_le_bytes());
     }
 
-    pub fn emit_add(&mut self) { self.code.push(op::ADD); }
-    pub fn emit_sub(&mut self) { self.code.push(op::SUB); }
-    pub fn emit_mul(&mut self) { self.code.push(op::MUL); }
-    pub fn emit_div(&mut self) { self.code.push(op::DIV); }
-    pub fn emit_neg(&mut self) { self.code.push(op::NEG); }
-    pub fn emit_eq(&mut self)  { self.code.push(op::EQ); }
-    pub fn emit_lt(&mut self)  { self.code.push(op::LT); }
+    pub fn emit_add(&mut self) { self.flush_pending_loads(); self.code.push(op::ADD); }
+    pub fn emit_sub(&mut self) { self.flush_pending_loads(); self.code.push(op::SUB); }
+    pub fn emit_mul(&mut self) { self.flush_pending_loads(); self.code.push(op::MUL); }
+    pub fn emit_div(&mut self) { self.flush_pending_loads(); self.code.push(op::DIV); }
+    pub fn emit_neg(&mut self) { self.flush_pending_loads(); self.code.push(op::NEG); }
+    pub fn emit_eq(&mut self)  { self.flush_pending_loads(); self.code.push(op::EQ); }
+    pub fn emit_lt(&mut self)  { self.flush_pending_loads(); self.code.push(op::LT); }
 
     pub fn emit_bytes_const(&mut self, data: &[u8]) {
+        self.flush_pending_loads();
         self.code.push(op::BYTES_CONST);
         self.code.push(data.len() as u8);
         self.code.extend_from_slice(data);
     }
-    pub fn emit_bytes_len(&mut self)    { self.code.push(op::BYTES_LEN); }
-    pub fn emit_bytes_get(&mut self)    { self.code.push(op::BYTES_GET); }
-    pub fn emit_bytes_eq(&mut self)     { self.code.push(op::BYTES_EQ); }
-    pub fn emit_bytes_concat(&mut self) { self.code.push(op::BYTES_CONCAT); }
+    pub fn emit_bytes_len(&mut self)    { self.flush_pending_loads(); self.code.push(op::BYTES_LEN); }
+    pub fn emit_bytes_get(&mut self)    { self.flush_pending_loads(); self.code.push(op::BYTES_GET); }
+    pub fn emit_bytes_eq(&mut self)     { self.flush_pending_loads(); self.code.push(op::BYTES_EQ); }
+    pub fn emit_bytes_concat(&mut self) { self.flush_pending_loads(); self.code.push(op::BYTES_CONCAT); }
 
     pub fn emit_call_direct(&mut self, code_addr: u16, n_args: u8) {
+        self.flush_pending_loads();
         self.code.push(op::CALL_DIRECT);
         self.code.extend_from_slice(&code_addr.to_le_bytes());
         self.code.push(n_args);
     }
 
     pub fn emit_tail_call_direct(&mut self, code_addr: u16, n_args: u8) {
+        self.flush_pending_loads();
         self.code.push(op::TAIL_CALL_DIRECT);
         self.code.extend_from_slice(&code_addr.to_le_bytes());
         self.code.push(n_args);
     }
 
     pub fn emit_foreign_fn_const(&mut self, idx: u16) {
+        self.flush_pending_loads();
         self.code.push(op::FOREIGN_FN_CONST);
         self.code.extend_from_slice(&idx.to_le_bytes());
     }
 
     pub fn emit_load_capture(&mut self, idx: u8) {
+        self.flush_pending_loads();
         self.code.push(op::LOAD_CAPTURE);
         self.code.push(idx);
     }

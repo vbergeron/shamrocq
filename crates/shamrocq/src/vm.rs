@@ -6,8 +6,8 @@ use crate::stats::MemSnapshot;
 use crate::value::Value;
 
 mod op {
-    pub const CTOR0: u8 = 0x01;
-    pub const CTOR: u8 = 0x02;
+    pub const PACK: u8 = 0x01;
+    pub const UNPACK: u8 = 0x02;
     pub const LOAD: u8 = 0x03;
     pub const GLOBAL: u8 = 0x04;
     pub const CLOSURE: u8 = 0x05;
@@ -38,6 +38,8 @@ mod op {
     pub const TAIL_CALL_DIRECT: u8 = 0x1E;
     pub const FOREIGN_FN_CONST: u8 = 0x1F;
     pub const LOAD_CAPTURE: u8 = 0x20;
+    pub const LOAD2: u8 = 0x21;
+    pub const LOAD3: u8 = 0x22;
 }
 
 #[derive(Debug)]
@@ -187,7 +189,7 @@ impl<'buf> Vm<'buf> {
     /// Register a host function at the given index.
     ///
     /// The index must match the one assigned by the compiler for `define-foreign`
-    /// declarations (see the generated `foreign_fns.rs`). Call this before
+    /// declarations (see `foreign` module in the generated `bindings.rs`). Call this before
     /// `load_program` so the global slot resolves to the correct callable value.
     pub fn register_foreign(&mut self, idx: u16, f: ForeignFn) {
         self.foreign_fns[idx as usize] = Some(f);
@@ -291,22 +293,30 @@ impl<'buf> Vm<'buf> {
             pc += 1;
 
             match opcode {
-                op::CTOR0 => {
-                    let tag = code[pc];
-                    pc += 1;
-                    self.arena.stack_push(Value::ctor(tag, 0))?;
-                    self.record_stack();
-                }
-
-                op::CTOR => {
+                op::PACK => {
                     let tag = code[pc];
                     let arity = code[pc + 1] as usize;
                     pc += 2;
-                    let val = self.arena.alloc_ctor_from_stack(tag, arity)?;
-                    stat!(self, alloc_count_ctor += 1);
-                    stat!(self, alloc_bytes_total += (arity * 4) as u32);
-                    self.record_heap();
-                    self.arena.stack_push(val)?;
+                    if arity == 0 {
+                        self.arena.stack_push(Value::ctor(tag, 0))?;
+                    } else {
+                        let val = self.arena.alloc_ctor_from_stack(tag, arity)?;
+                        stat!(self, alloc_count_ctor += 1);
+                        stat!(self, alloc_bytes_total += (arity * 4) as u32);
+                        self.record_heap();
+                        self.arena.stack_push(val)?;
+                    }
+                    self.record_stack();
+                }
+
+                op::UNPACK => {
+                    let n = code[pc] as usize;
+                    pc += 1;
+                    let scrutinee = self.arena.stack_pop();
+                    for i in 0..n {
+                        let field = self.arena.ctor_field(scrutinee, i);
+                        self.arena.stack_push(field)?;
+                    }
                     self.record_stack();
                 }
 
@@ -315,6 +325,31 @@ impl<'buf> Vm<'buf> {
                     pc += 1;
                     let val = self.arena.stack_read_at(frame_base - (idx + 1) * 4);
                     self.arena.stack_push(val)?;
+                    self.record_stack();
+                }
+
+                op::LOAD2 => {
+                    let idx_a = code[pc] as usize;
+                    let idx_b = code[pc + 1] as usize;
+                    pc += 2;
+                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1) * 4);
+                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1) * 4);
+                    self.arena.stack_push(a)?;
+                    self.arena.stack_push(b)?;
+                    self.record_stack();
+                }
+
+                op::LOAD3 => {
+                    let idx_a = code[pc] as usize;
+                    let idx_b = code[pc + 1] as usize;
+                    let idx_c = code[pc + 2] as usize;
+                    pc += 3;
+                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1) * 4);
+                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1) * 4);
+                    let c = self.arena.stack_read_at(frame_base - (idx_c + 1) * 4);
+                    self.arena.stack_push(a)?;
+                    self.arena.stack_push(b)?;
+                    self.arena.stack_push(c)?;
                     self.record_stack();
                 }
 

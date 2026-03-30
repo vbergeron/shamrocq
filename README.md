@@ -74,15 +74,13 @@ shamrocq-compiler -o out/ mylib.scm helpers.scm
 ```
 compiled 12 globals, 8 ctors, 1024 bytes of bytecode from 2 files
   -> out/bytecode.bin
-  -> out/funcs.rs
-  -> out/ctors.rs
+  -> out/bindings.rs
 ```
 
 | Output file | Contents |
 |-------------|----------|
 | `bytecode.bin` | Compiled bytecode image |
-| `funcs.rs` | `pub const` for each global function index |
-| `ctors.rs` | `pub const` for each constructor tag ID |
+| `bindings.rs` | `pub mod funcs`, `pub mod ctors`, `pub mod foreign` with const indices |
 
 Run `shamrocq-compiler --help` for all options.
 
@@ -93,13 +91,10 @@ Include the generated files in your firmware crate:
 ```rust
 static BYTECODE: &[u8] = include_bytes!("path/to/bytecode.bin");
 
-mod funcs {
-    include!("path/to/funcs.rs");
+mod bindings {
+    include!("path/to/bindings.rs");
 }
-
-mod ctors {
-    include!("path/to/ctors.rs");
-}
+use bindings::{funcs, ctors};
 ```
 
 Then load and run:

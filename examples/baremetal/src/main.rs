@@ -9,15 +9,10 @@ use shamrocq::{Program, Value, Vm, VmError};
 
 static BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bytecode.bin"));
 
-mod funcs {
-    include!(concat!(env!("OUT_DIR"), "/funcs.rs"));
+mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
-mod ctors {
-    include!(concat!(env!("OUT_DIR"), "/ctors.rs"));
-}
-mod foreign {
-    include!(concat!(env!("OUT_DIR"), "/foreign_fns.rs"));
-}
+use bindings::{ctors, funcs, foreign};
 
 fn print_int(_vm: &mut Vm<'_>, arg: Value) -> Result<Value, VmError> {
     let _ = hprintln!("{}", arg.integer_value());
