@@ -29,6 +29,9 @@
 ///   CALL_N            code_addr:u16le  n_args:u8
 ///   TAIL_CALL_N       code_addr:u16le  n_args:u8
 ///   RET
+///   SET_CR
+///   CALL_DYNAMIC_N    n_args:u8
+///   TAIL_CALL_DYNAMIC_N  n_args:u8
 ///
 ///   -- Control flow (branching) --
 ///   MATCH             base_tag:u8  n_entries:u8  [arity:u8 offset:u16le]*n
@@ -90,6 +93,11 @@ pub const DIV: u8 = 0x1A;
 pub const NEG: u8 = 0x1B;
 pub const EQ: u8 = 0x1C;
 pub const LT: u8 = 0x1D;
+
+// Callee register + dynamic N-ary calls
+pub const SET_CR: u8 = 0x23;
+pub const CALL_DYNAMIC_N: u8 = 0x24;
+pub const TAIL_CALL_DYNAMIC_N: u8 = 0x25;
 
 // Bytes
 pub const BYTES: u8 = 0x1E;

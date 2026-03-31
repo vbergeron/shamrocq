@@ -17,6 +17,8 @@ pub enum Expr {
     PrimOp(PrimOp, Vec<Expr>),
     Lambda(String, Box<Expr>),
     App(Box<Expr>, Box<Expr>),
+    /// Explicit n-ary application from `@` — preserves call-site arity for codegen.
+    AppN(Box<Expr>, Vec<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Let(String, Box<Expr>, Box<Expr>),
     Letrec(String, Box<Expr>, Box<Expr>),
@@ -234,17 +236,18 @@ fn desugar_lambdas(items: &[Sexp]) -> Result<Expr, String> {
     Ok(body)
 }
 
-/// (@ f x y z) -> (((f x) y) z)
+/// (@ f x y z) -> AppN(f, [x, y, z])
+/// Preserves the call-site arity so codegen can use SET_CR + CALL_DYNAMIC_N.
 fn desugar_at(items: &[Sexp]) -> Result<Expr, String> {
     if items.len() < 2 {
         return Err("@ needs at least a function".to_string());
     }
-    let mut result = desugar_expr(&items[1])?;
-    for arg in &items[2..] {
-        let a = desugar_expr(arg)?;
-        result = Expr::App(Box::new(result), Box::new(a));
-    }
-    Ok(result)
+    let func = desugar_expr(&items[1])?;
+    let args = items[2..]
+        .iter()
+        .map(desugar_expr)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Expr::AppN(Box::new(func), args))
 }
 
 fn desugar_if(items: &[Sexp]) -> Result<Expr, String> {
@@ -443,8 +446,8 @@ mod tests {
                     Expr::Lambda(p2, body) => {
                         assert_eq!(p2, "m");
                         match body.as_ref() {
-                            Expr::App(_, _) => {}
-                            other => panic!("expected App, got {:?}", other),
+                            Expr::AppN(_, _) => {}
+                            other => panic!("expected AppN, got {:?}", other),
                         }
                     }
                     other => panic!("expected inner Lambda, got {:?}", other),

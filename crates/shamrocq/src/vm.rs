@@ -316,6 +316,8 @@ impl<'buf> Vm<'buf> {
         let mut call_depth: usize = 0;
         let mut frame_base = frame_base;
         let mut env = start_env;
+        // Callee register: SET_CR writes here; CALL_DYNAMIC_N / TAIL_CALL_DYNAMIC_N reads it.
+        let mut cr = Value::ctor(0, 0);
 
         loop {
             if pc >= code.len() {
@@ -852,6 +854,181 @@ impl<'buf> Vm<'buf> {
                     let arity = code[pc + 2];
                     pc += 3;
                     self.arena.stack_push(Value::foreign_fn(idx, arity))?;
+                }
+
+                // SET_CR: pop top of stack into the callee register.
+                op::SET_CR => {
+                    cr = self.arena.stack_pop();
+                }
+
+                // CALL_DYNAMIC_N n: call cr with the top n stack slots as args.
+                // Exact arity  → flat frame push (same layout as CALL_N).
+                // Under-arity  → build partial application.
+                // Application  → extend or execute accumulated args.
+                op::CALL_DYNAMIC_N => {
+                    let n_args = code[pc] as usize;
+                    pc += 1;
+                    let func = cr;
+                    if !func.is_callable() {
+                        return Err(VmError::NotAClosure);
+                    }
+
+                    if func.is_application() {
+                        let applied = self.arena.application_applied(func) as usize;
+                        let arity   = self.arena.application_arity(func)   as usize;
+                        let total   = applied + n_args;
+                        let mut new_args = [Value::ctor(0, 0); 16];
+                        for i in (0..n_args).rev() { new_args[i] = self.arena.stack_pop(); }
+                        if total < arity {
+                            let callee = self.arena.application_callee(func);
+                            let mut combined = [Value::ctor(0, 0); 16];
+                            for i in 0..applied  { combined[i]          = self.arena.application_arg(func, i); }
+                            for i in 0..n_args   { combined[applied + i] = new_args[i]; }
+                            let pap = self.arena.alloc_application(callee, arity as u8, &combined[..total])?;
+                            self.record_heap();
+                            self.arena.stack_push(pap)?;
+                            self.record_stack();
+                        } else if total == arity {
+                            self.arena.stack_push(env)?;
+                            self.arena.stack_push(Value::from_raw(pc as u32))?;
+                            self.arena.stack_push(Value::from_raw(frame_base as u32))?;
+                            call_depth += 1;
+                            stat!(self, exec_call_count += 1);
+                            stat!(self, exec_peak_call_depth = max call_depth as u32);
+                            frame_base = self.arena.stack_bot_pos();
+                            for i in 0..applied { self.arena.stack_push(self.arena.application_arg(func, i))?; }
+                            for i in 0..n_args  { self.arena.stack_push(new_args[i])?; }
+                            self.record_stack();
+                            let callee = self.arena.application_callee(func);
+                            if callee.is_function() { env = Value::ctor(0, 0); pc = callee.fn_addr() as usize; }
+                            else                    { env = callee; pc = self.arena.closure_code(callee) as usize; }
+                        } else {
+                            return Err(VmError::NotAClosure);
+                        }
+                    } else if func.is_foreign_fn() && func.fn_arity() == 1 && n_args == 1 {
+                        let f = self.foreign_fns[func.fn_addr() as usize].ok_or(VmError::InvalidBytecode)?;
+                        let arg = self.arena.stack_pop();
+                        let result = f(self, arg)?;
+                        self.arena.stack_push(result)?;
+                    } else {
+                        let arity = if func.is_function() { func.fn_arity() as usize }
+                                    else { self.arena.closure_arity(func) as usize };
+                        let mut tmp = [Value::ctor(0, 0); 16];
+                        for i in (0..n_args).rev() { tmp[i] = self.arena.stack_pop(); }
+                        if n_args == arity {
+                            self.arena.stack_push(env)?;
+                            self.arena.stack_push(Value::from_raw(pc as u32))?;
+                            self.arena.stack_push(Value::from_raw(frame_base as u32))?;
+                            call_depth += 1;
+                            stat!(self, exec_call_count += 1);
+                            stat!(self, exec_peak_call_depth = max call_depth as u32);
+                            frame_base = self.arena.stack_bot_pos();
+                            for i in 0..n_args { self.arena.stack_push(tmp[i])?; }
+                            self.record_stack();
+                            if func.is_function() { env = Value::ctor(0, 0); pc = func.fn_addr() as usize; }
+                            else                  { env = func; pc = self.arena.closure_code(func) as usize; }
+                        } else if n_args < arity {
+                            let pap = self.arena.alloc_application(func, arity as u8, &tmp[..n_args])?;
+                            self.record_heap();
+                            self.arena.stack_push(pap)?;
+                            self.record_stack();
+                        } else {
+                            return Err(VmError::NotAClosure);
+                        }
+                    }
+                }
+
+                // TAIL_CALL_DYNAMIC_N n: tail version of CALL_DYNAMIC_N — reuses current frame.
+                // Note: pc is not advanced here because it is always overwritten by the callee
+                // address or the saved return-pc from the frame header before it is next read.
+                op::TAIL_CALL_DYNAMIC_N => {
+                    let n_args = code[pc] as usize;
+                    let func = cr;
+                    if !func.is_callable() {
+                        return Err(VmError::NotAClosure);
+                    }
+
+                    if func.is_application() {
+                        let applied = self.arena.application_applied(func) as usize;
+                        let arity   = self.arena.application_arity(func)   as usize;
+                        let total   = applied + n_args;
+                        let mut new_args = [Value::ctor(0, 0); 16];
+                        for i in (0..n_args).rev() { new_args[i] = self.arena.stack_pop(); }
+                        if total < arity {
+                            let callee = self.arena.application_callee(func);
+                            let mut combined = [Value::ctor(0, 0); 16];
+                            for i in 0..applied  { combined[i]          = self.arena.application_arg(func, i); }
+                            for i in 0..n_args   { combined[applied + i] = new_args[i]; }
+                            let pap = self.arena.alloc_application(callee, arity as u8, &combined[..total])?;
+                            self.record_heap();
+                            if call_depth == 0 {
+                                self.arena.set_stack_bot_pos(frame_base);
+                                self.arena.stack_push(pap)?;
+                                return Ok(pap);
+                            }
+                            let saved_fb  = self.arena.stack_read_at(frame_base).raw() as usize;
+                            let saved_pc  = self.arena.stack_read_at(frame_base + 4).raw() as usize;
+                            let saved_env = self.arena.stack_read_at(frame_base + 8);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            self.arena.stack_push(pap)?;
+                            call_depth -= 1; pc = saved_pc; frame_base = saved_fb; env = saved_env;
+                        } else if total == arity {
+                            self.arena.set_stack_bot_pos(frame_base);
+                            stat!(self, exec_tail_call_count += 1);
+                            for i in 0..applied { self.arena.stack_push(self.arena.application_arg(func, i))?; }
+                            for i in 0..n_args  { self.arena.stack_push(new_args[i])?; }
+                            self.record_stack();
+                            let callee = self.arena.application_callee(func);
+                            if callee.is_function() { env = Value::ctor(0, 0); pc = callee.fn_addr() as usize; }
+                            else                    { env = callee; pc = self.arena.closure_code(callee) as usize; }
+                        } else {
+                            return Err(VmError::NotAClosure);
+                        }
+                    } else if func.is_foreign_fn() && func.fn_arity() == 1 && n_args == 1 {
+                        let f = self.foreign_fns[func.fn_addr() as usize].ok_or(VmError::InvalidBytecode)?;
+                        let arg = self.arena.stack_pop();
+                        let result = f(self, arg)?;
+                        if call_depth == 0 {
+                            self.arena.set_stack_bot_pos(frame_base);
+                            self.arena.stack_push(result)?;
+                            return Ok(result);
+                        }
+                        let saved_fb  = self.arena.stack_read_at(frame_base).raw() as usize;
+                        let saved_pc  = self.arena.stack_read_at(frame_base + 4).raw() as usize;
+                        let saved_env = self.arena.stack_read_at(frame_base + 8);
+                        self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                        self.arena.stack_push(result)?;
+                        call_depth -= 1; pc = saved_pc; frame_base = saved_fb; env = saved_env;
+                    } else {
+                        let arity = if func.is_function() { func.fn_arity() as usize }
+                                    else { self.arena.closure_arity(func) as usize };
+                        let mut tmp = [Value::ctor(0, 0); 16];
+                        for i in (0..n_args).rev() { tmp[i] = self.arena.stack_pop(); }
+                        if n_args == arity {
+                            self.arena.set_stack_bot_pos(frame_base);
+                            stat!(self, exec_tail_call_count += 1);
+                            for i in 0..n_args { self.arena.stack_push(tmp[i])?; }
+                            self.record_stack();
+                            if func.is_function() { env = Value::ctor(0, 0); pc = func.fn_addr() as usize; }
+                            else                  { env = func; pc = self.arena.closure_code(func) as usize; }
+                        } else if n_args < arity {
+                            let pap = self.arena.alloc_application(func, arity as u8, &tmp[..n_args])?;
+                            self.record_heap();
+                            if call_depth == 0 {
+                                self.arena.set_stack_bot_pos(frame_base);
+                                self.arena.stack_push(pap)?;
+                                return Ok(pap);
+                            }
+                            let saved_fb  = self.arena.stack_read_at(frame_base).raw() as usize;
+                            let saved_pc  = self.arena.stack_read_at(frame_base + 4).raw() as usize;
+                            let saved_env = self.arena.stack_read_at(frame_base + 8);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            self.arena.stack_push(pap)?;
+                            call_depth -= 1; pc = saved_pc; frame_base = saved_fb; env = saved_env;
+                        } else {
+                            return Err(VmError::NotAClosure);
+                        }
+                    }
                 }
 
                 _ => return Err(VmError::InvalidBytecode),

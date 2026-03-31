@@ -41,6 +41,7 @@ fn elim(expr: RExpr) -> RExpr {
         }
         RExpr::Lambda(body) => RExpr::Lambda(Box::new(elim(*body))),
         RExpr::App(f, a) => RExpr::App(Box::new(elim(*f)), Box::new(elim(*a))),
+        RExpr::AppN(f, args) => RExpr::AppN(Box::new(elim(*f)), args.into_iter().map(elim).collect()),
         RExpr::Letrec(val, body) => {
             RExpr::Letrec(Box::new(elim(*val)), Box::new(elim(*body)))
         }

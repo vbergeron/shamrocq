@@ -279,6 +279,51 @@ impl Compiler {
                 }
             }
 
+            RExpr::AppN(func, args) => {
+                let n = args.len();
+                if n == 0 {
+                    // (@ f) with no args — just produce the function value.
+                    self.compile_expr(func, ctx, tail);
+                    return;
+                }
+                if n == 1 {
+                    // Single-arg @ is identical to App: use CALL1.
+                    self.compile_expr(func, ctx, false);
+                    self.compile_expr(&args[0], ctx, false);
+                    if tail { self.emitter.emit_tail_call1(); } else { self.emitter.emit_call1(); }
+                    return;
+                }
+                // Multi-arg: try static CALL_N for a known global with matching arity.
+                if let RExpr::Global(g) = func.as_ref() {
+                    let arity = self.global_arities.get(*g as usize).copied().unwrap_or(0);
+                    if arity as usize == n {
+                        for a in args {
+                            self.compile_expr(a, ctx, false);
+                        }
+                        if tail {
+                            let pos = self.emitter.emit_tail_call_n_placeholder(arity);
+                            self.flat_patches.push((pos, *g));
+                        } else {
+                            let pos = self.emitter.emit_call_n_placeholder(arity);
+                            self.flat_patches.push((pos, *g));
+                        }
+                        return;
+                    }
+                }
+                // Dynamic path: callee arity is unknown, so compile as curried calls.
+                // Each CALL1 handles partial application / over-application correctly.
+                self.compile_expr(func, ctx, false);
+                for (i, a) in args.iter().enumerate() {
+                    self.compile_expr(a, ctx, false);
+                    let is_last = i == n - 1;
+                    if is_last && tail {
+                        self.emitter.emit_tail_call1();
+                    } else {
+                        self.emitter.emit_call1();
+                    }
+                }
+            }
+
             RExpr::Let(val, body) => {
                 self.compile_expr(val, ctx, false);
                 ctx.push_bindings(1);
@@ -548,6 +593,12 @@ fn collect_free(expr: &RExpr, bound: usize, free: &mut Vec<u8>) {
         RExpr::App(f, a) => {
             collect_free(f, bound, free);
             collect_free(a, bound, free);
+        }
+        RExpr::AppN(f, args) => {
+            collect_free(f, bound, free);
+            for a in args {
+                collect_free(a, bound, free);
+            }
         }
         RExpr::Let(val, body) => {
             collect_free(val, bound, free);

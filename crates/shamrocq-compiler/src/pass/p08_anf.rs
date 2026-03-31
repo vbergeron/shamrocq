@@ -46,6 +46,10 @@ pub(crate) fn shift(expr: &RExpr, cutoff: usize, amount: usize) -> RExpr {
             Box::new(shift(func, cutoff, amount)),
             Box::new(shift(arg, cutoff, amount)),
         ),
+        RExpr::AppN(func, args) => RExpr::AppN(
+            Box::new(shift(func, cutoff, amount)),
+            args.iter().map(|a| shift(a, cutoff, amount)).collect(),
+        ),
         RExpr::Let(val, body) => RExpr::Let(
             Box::new(shift(val, cutoff, amount)),
             Box::new(shift(body, cutoff + 1, amount)),
@@ -93,6 +97,10 @@ pub(crate) fn shift_down(expr: &RExpr, cutoff: usize, amount: usize) -> RExpr {
             Box::new(shift_down(func, cutoff, amount)),
             Box::new(shift_down(arg, cutoff, amount)),
         ),
+        RExpr::AppN(func, args) => RExpr::AppN(
+            Box::new(shift_down(func, cutoff, amount)),
+            args.iter().map(|a| shift_down(a, cutoff, amount)).collect(),
+        ),
         RExpr::Let(val, body) => RExpr::Let(
             Box::new(shift_down(val, cutoff, amount)),
             Box::new(shift_down(body, cutoff + 1, amount)),
@@ -124,6 +132,7 @@ pub(crate) fn references_local(expr: &RExpr, target: u8, depth: usize) -> bool {
         RExpr::PrimOp(_, args) => args.iter().any(|a| references_local(a, target, depth)),
         RExpr::Lambda(body) => references_local(body, target, depth + 1),
         RExpr::App(f, a) => references_local(f, target, depth) || references_local(a, target, depth),
+        RExpr::AppN(f, args) => references_local(f, target, depth) || args.iter().any(|a| references_local(a, target, depth)),
         RExpr::Let(val, body) => {
             references_local(val, target, depth) || references_local(body, target, depth + 1)
         }
@@ -152,6 +161,12 @@ fn anf_normalize(expr: RExpr) -> RExpr {
         }
 
         RExpr::Lambda(body) => RExpr::Lambda(Box::new(anf_normalize(*body))),
+
+        RExpr::AppN(func, args) => {
+            let func = anf_normalize(*func);
+            let args: Vec<RExpr> = args.into_iter().map(anf_normalize).collect();
+            lift_appn_args(func, args)
+        }
 
         RExpr::App(func, arg) => {
             let func = anf_normalize(*func);
@@ -217,6 +232,41 @@ fn lift_ctor_fields(tag: u8, fields: Vec<RExpr>) -> RExpr {
 
     for j in (0..k).rev() {
         let val = shift(&fields[non_atomic[j]], 0, j);
+        result = RExpr::Let(Box::new(val), Box::new(result));
+    }
+
+    result
+}
+
+/// Lift non-atomic arguments of an AppN out into Let bindings.
+/// The callee expression is shifted up by the number of introduced bindings.
+fn lift_appn_args(func: RExpr, args: Vec<RExpr>) -> RExpr {
+    let non_atomic: Vec<usize> = (0..args.len())
+        .filter(|i| !is_atomic(&args[*i]))
+        .collect();
+
+    if non_atomic.is_empty() {
+        return RExpr::AppN(Box::new(func), args);
+    }
+
+    let k = non_atomic.len();
+
+    // Rewrite args: non-atomic ones become Local refs, atomic ones are shifted.
+    let mut new_args = Vec::with_capacity(args.len());
+    for (i, arg) in args.iter().enumerate() {
+        if let Some(j) = non_atomic.iter().position(|&idx| idx == i) {
+            new_args.push(RExpr::Local((k - 1 - j) as u8));
+        } else {
+            new_args.push(shift(arg, 0, k));
+        }
+    }
+
+    // Shift the callee up by k since it is now inside k Let bindings.
+    let mut result: RExpr = RExpr::AppN(Box::new(shift(&func, 0, k)), new_args);
+
+    // Wrap in Let bindings, innermost first.
+    for j in (0..k).rev() {
+        let val = shift(&args[non_atomic[j]], 0, j);
         result = RExpr::Let(Box::new(val), Box::new(result));
     }
 

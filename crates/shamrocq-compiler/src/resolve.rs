@@ -16,6 +16,8 @@ pub enum RExpr {
     PrimOp(PrimOp, Vec<RExpr>),
     Lambda(Box<RExpr>),
     App(Box<RExpr>, Box<RExpr>),
+    /// Explicit n-ary application (from `@`): callee + all args, arity preserved.
+    AppN(Box<RExpr>, Vec<RExpr>),
     Let(Box<RExpr>, Box<RExpr>),
     Letrec(Box<RExpr>, Box<RExpr>),
     Match(Box<RExpr>, Vec<RMatchCase>),
@@ -201,6 +203,15 @@ fn resolve_expr(
             let rf = resolve_expr(f, locals, tags, globals)?;
             let ra = resolve_expr(a, locals, tags, globals)?;
             Ok(RExpr::App(Box::new(rf), Box::new(ra)))
+        }
+
+        Expr::AppN(f, args) => {
+            let rf = resolve_expr(f, locals, tags, globals)?;
+            let rargs = args
+                .iter()
+                .map(|a| resolve_expr(a, locals, tags, globals))
+                .collect::<Result<_, _>>()?;
+            Ok(RExpr::AppN(Box::new(rf), rargs))
         }
 
         Expr::If(c, t, e) => {

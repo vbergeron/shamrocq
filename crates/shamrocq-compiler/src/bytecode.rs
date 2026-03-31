@@ -170,6 +170,26 @@ impl Emitter {
         self.code.push(op::RET);
     }
 
+    /// SET_CR: pop TOS into the callee register.
+    pub fn emit_set_cr(&mut self) {
+        self.flush_pending_loads();
+        self.code.push(op::SET_CR);
+    }
+
+    /// CALL_DYNAMIC_N n: call cr with n args (dynamic dispatch).
+    pub fn emit_call_dynamic_n(&mut self, n_args: u8) {
+        self.flush_pending_loads();
+        self.code.push(op::CALL_DYNAMIC_N);
+        self.code.push(n_args);
+    }
+
+    /// TAIL_CALL_DYNAMIC_N n: tail version of CALL_DYNAMIC_N.
+    pub fn emit_tail_call_dynamic_n(&mut self, n_args: u8) {
+        self.flush_pending_loads();
+        self.code.push(op::TAIL_CALL_DYNAMIC_N);
+        self.code.push(n_args);
+    }
+
     /// Emits a MATCH jump-table header. Returns the position of the table
     /// so callers can patch entries after emitting branches.
     ///
