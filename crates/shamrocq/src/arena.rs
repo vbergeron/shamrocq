@@ -1,3 +1,4 @@
+use crate::bytes;
 use crate::value::Value;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -13,13 +14,13 @@ const GC_FWD_MASK: u32 = 0xFFFF;
 const GC_SIZE_MASK: u32 = 0x1FFF;
 
 pub struct Arena<'a> {
-    buf: &'a mut [u8],
+    buf: &'a mut [u32],
     heap_top: usize,
     stack_bot: usize,
 }
 
 impl<'a> Arena<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self {
+    pub fn new(buf: &'a mut [u32]) -> Self {
         let len = buf.len();
         Arena {
             buf,
@@ -28,18 +29,18 @@ impl<'a> Arena<'a> {
         }
     }
 
+    pub fn from_bytes(buf: &'a mut [u8]) -> Self {
+        Self::new(bytes::as_words_mut(buf))
+    }
+
     pub fn reset(&mut self) {
         self.heap_top = 0;
         self.stack_bot = self.buf.len();
     }
 
-    fn align4(offset: usize) -> usize {
-        (offset + 3) & !3
-    }
-
     pub fn alloc(&mut self, words: usize) -> Result<usize, ArenaError> {
-        let base = Self::align4(self.heap_top);
-        let end = base + words * 4;
+        let base = self.heap_top;
+        let end = base + words;
         if end > self.stack_bot {
             return Err(ArenaError::OutOfMemory);
         }
@@ -76,10 +77,10 @@ impl<'a> Arena<'a> {
         self.write_word(offset, w & !GC_MARK_BIT);
     }
 
-    pub fn gc_set_forwarding(&mut self, offset: usize, dest_word: usize) {
+    pub fn gc_set_forwarding(&mut self, offset: usize, dest: usize) {
         let w = self.read_word(offset);
         let cleared = w & !(GC_FWD_MASK << GC_FWD_SHIFT);
-        self.write_word(offset, cleared | (((dest_word as u32) & GC_FWD_MASK) << GC_FWD_SHIFT));
+        self.write_word(offset, cleared | (((dest as u32) & GC_FWD_MASK) << GC_FWD_SHIFT));
     }
 
     pub fn gc_read_forwarding(&self, offset: usize) -> usize {
@@ -100,7 +101,7 @@ impl<'a> Arena<'a> {
         let offset = self.alloc(1 + n)?;
         self.write_gc_header(offset, false, 1 + n);
         for (i, &f) in fields.iter().enumerate() {
-            self.write_word(offset + (1 + i) * 4, f.raw());
+            self.write_word(offset + 1 + i, f.raw());
         }
         Ok(Value::ctor(tag, offset))
     }
@@ -110,14 +111,14 @@ impl<'a> Arena<'a> {
         self.write_gc_header(offset, false, 1 + arity);
         for i in (0..arity).rev() {
             let field = self.stack_pop();
-            self.write_word(offset + (1 + i) * 4, field.raw());
+            self.write_word(offset + 1 + i, field.raw());
         }
         Ok(Value::ctor(tag, offset))
     }
 
     pub fn ctor_field(&self, val: Value, idx: usize) -> Value {
         let base = val.offset();
-        Value::from_raw(self.read_word(base + (1 + idx) * 4))
+        Value::from_raw(self.read_word(base + 1 + idx))
     }
 
     pub fn ctor_arity(&self, val: Value) -> usize {
@@ -130,7 +131,7 @@ impl<'a> Arena<'a> {
     // closure_header: [code_addr:16 | arity:8 | n_bound:8]
 
     fn closure_header_offset(val: Value) -> usize {
-        val.closure_offset() + 4
+        val.closure_offset() + 1
     }
 
     pub fn alloc_closure(
@@ -143,9 +144,9 @@ impl<'a> Arena<'a> {
         let offset = self.alloc(2 + n)?;
         self.write_gc_header(offset, false, 2 + n);
         let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (n as u32);
-        self.write_word(offset + 4, header);
+        self.write_word(offset + 1, header);
         for (i, &v) in bound.iter().enumerate() {
-            self.write_word(offset + (2 + i) * 4, v.raw());
+            self.write_word(offset + 2 + i, v.raw());
         }
         Ok(Value::closure(offset))
     }
@@ -159,10 +160,10 @@ impl<'a> Arena<'a> {
         let offset = self.alloc(2 + n_bound)?;
         self.write_gc_header(offset, false, 2 + n_bound);
         let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (n_bound as u32);
-        self.write_word(offset + 4, header);
+        self.write_word(offset + 1, header);
         for i in (0..n_bound).rev() {
             let val = self.stack_pop();
-            self.write_word(offset + (2 + i) * 4, val.raw());
+            self.write_word(offset + 2 + i, val.raw());
         }
         Ok(Value::closure(offset))
     }
@@ -184,12 +185,12 @@ impl<'a> Arena<'a> {
 
     pub fn closure_bound(&self, val: Value, idx: usize) -> Value {
         let base = val.closure_offset();
-        Value::from_raw(self.read_word(base + (2 + idx) * 4))
+        Value::from_raw(self.read_word(base + 2 + idx))
     }
 
     pub fn closure_set_bound(&mut self, closure: Value, idx: usize, val: Value) {
         let base = closure.closure_offset();
-        self.write_word(base + (2 + idx) * 4, val.raw());
+        self.write_word(base + 2 + idx, val.raw());
     }
 
     pub fn extend_closure(
@@ -205,12 +206,12 @@ impl<'a> Arena<'a> {
         let offset = self.alloc(2 + new_bound)?;
         self.write_gc_header(offset, false, 2 + new_bound);
         let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (new_bound as u32);
-        self.write_word(offset + 4, header);
+        self.write_word(offset + 1, header);
         for i in 0..old_bound {
             let v = self.closure_bound(closure, i);
-            self.write_word(offset + (2 + i) * 4, v.raw());
+            self.write_word(offset + 2 + i, v.raw());
         }
-        self.write_word(offset + (2 + old_bound) * 4, extra_arg.raw());
+        self.write_word(offset + 2 + old_bound, extra_arg.raw());
         Ok(Value::closure(offset))
     }
 
@@ -223,67 +224,83 @@ impl<'a> Arena<'a> {
         let data_words = (len + 3) / 4;
         let offset = self.alloc(2 + data_words)?;
         self.write_gc_header(offset, true, 2 + data_words);
-        self.write_word(offset + 4, len as u32);
-        self.buf[offset + 8..offset + 8 + len].copy_from_slice(data);
+        self.write_word(offset + 1, len as u32);
+        let dst = bytes::words_as_bytes_mut(&mut self.buf[offset + 2..offset + 2 + data_words]);
+        dst[..len].copy_from_slice(data);
         Ok(Value::bytes(offset))
     }
 
     pub fn bytes_len(&self, val: Value) -> usize {
-        self.read_word(val.bytes_offset() + 4) as usize
+        self.read_word(val.bytes_offset() + 1) as usize
     }
 
     pub fn bytes_data(&self, val: Value) -> &[u8] {
         let offset = val.bytes_offset();
-        let len = self.read_word(offset + 4) as usize;
-        &self.buf[offset + 8..offset + 8 + len]
+        let len = self.read_word(offset + 1) as usize;
+        let data_words = (len + 3) / 4;
+        let word_slice = &self.buf[offset + 2..offset + 2 + data_words];
+        &bytes::words_as_bytes(word_slice)[..len]
     }
 
     pub fn bytes_concat(&mut self, a: Value, b: Value) -> Result<Value, ArenaError> {
-        let a_off = a.bytes_offset() + 8;
-        let a_len = self.bytes_len(a);
-        let b_off = b.bytes_offset() + 8;
-        let b_len = self.bytes_len(b);
+        let a_off = a.bytes_offset();
+        let a_len = self.read_word(a_off + 1) as usize;
+        let b_off = b.bytes_offset();
+        let b_len = self.read_word(b_off + 1) as usize;
         let total = a_len + b_len;
         let data_words = (total + 3) / 4;
         let offset = self.alloc(2 + data_words)?;
         self.write_gc_header(offset, true, 2 + data_words);
-        self.write_word(offset + 4, total as u32);
-        self.buf.copy_within(a_off..a_off + a_len, offset + 8);
-        self.buf.copy_within(b_off..b_off + b_len, offset + 8 + a_len);
+        self.write_word(offset + 1, total as u32);
+        // Copy byte data from a then b into the new allocation.
+        // We must read source data before writing to avoid aliasing issues,
+        // but since alloc always grows heap_top forward and sources are behind,
+        // the regions never overlap. Use raw pointer copies.
+        let buf_ptr = self.buf.as_mut_ptr();
+        unsafe {
+            let dst = (buf_ptr.add(offset + 2)) as *mut u8;
+            let src_a = (buf_ptr.add(a_off + 2)) as *const u8;
+            let src_b = (buf_ptr.add(b_off + 2)) as *const u8;
+            core::ptr::copy_nonoverlapping(src_a, dst, a_len);
+            core::ptr::copy_nonoverlapping(src_b, dst.add(a_len), b_len);
+        }
         Ok(Value::bytes(offset))
     }
 
     // -- stack (grows downward) --
 
+    #[inline(always)]
     pub fn stack_push(&mut self, val: Value) -> Result<(), ArenaError> {
-        if self.stack_bot < self.heap_top + 4 {
+        if self.stack_bot <= self.heap_top {
             return Err(ArenaError::OutOfMemory);
         }
-        self.stack_bot -= 4;
-        self.write_word(self.stack_bot, val.raw());
+        self.stack_bot -= 1;
+        self.buf[self.stack_bot] = val.raw();
         Ok(())
     }
 
+    #[inline(always)]
     pub fn stack_pop(&mut self) -> Value {
-        let val = Value::from_raw(self.read_word(self.stack_bot));
-        self.stack_bot += 4;
+        let val = Value::from_raw(self.buf[self.stack_bot]);
+        self.stack_bot += 1;
         val
     }
 
+    #[inline(always)]
     pub fn stack_peek(&self, depth: usize) -> Value {
-        Value::from_raw(self.read_word(self.stack_bot + depth * 4))
+        Value::from_raw(self.buf[self.stack_bot + depth])
     }
 
     pub fn stack_set(&mut self, depth: usize, val: Value) {
-        self.write_word(self.stack_bot + depth * 4, val.raw());
+        self.buf[self.stack_bot + depth] = val.raw();
     }
 
     pub fn stack_depth(&self) -> usize {
-        (self.buf.len() - self.stack_bot) / 4
+        self.buf.len() - self.stack_bot
     }
 
     pub fn stack_truncate(&mut self, depth: usize) {
-        self.stack_bot = self.buf.len() - depth * 4;
+        self.stack_bot = self.buf.len() - depth;
     }
 
     pub fn stack_bot_pos(&self) -> usize {
@@ -294,23 +311,24 @@ impl<'a> Arena<'a> {
         self.stack_bot = pos;
     }
 
-    pub fn stack_read_at(&self, byte_pos: usize) -> Value {
-        Value::from_raw(self.read_word(byte_pos))
+    pub fn stack_read_at(&self, word_pos: usize) -> Value {
+        Value::from_raw(self.buf[word_pos])
     }
 
-    pub fn stack_write_at(&mut self, byte_pos: usize, val: Value) {
-        self.write_word(byte_pos, val.raw());
+    pub fn stack_write_at(&mut self, word_pos: usize, val: Value) {
+        self.buf[word_pos] = val.raw();
     }
 
-    // -- raw word access (little-endian) --
+    // -- raw word access --
 
+    #[inline(always)]
     pub(crate) fn write_word(&mut self, offset: usize, val: u32) {
-        let bytes = val.to_le_bytes();
-        self.buf[offset..offset + 4].copy_from_slice(&bytes);
+        self.buf[offset] = val;
     }
 
+    #[inline(always)]
     pub(crate) fn read_word(&self, offset: usize) -> u32 {
-        u32::from_le_bytes(self.buf[offset..offset + 4].try_into().unwrap())
+        self.buf[offset]
     }
 
     pub fn heap_used(&self) -> usize {
@@ -333,11 +351,11 @@ impl<'a> Arena<'a> {
         self.buf.len()
     }
 
-    pub fn heap_data(&self) -> &[u8] {
+    pub fn heap_data(&self) -> &[u32] {
         &self.buf[..self.heap_top]
     }
 
-    pub fn stack_data(&self) -> &[u8] {
+    pub fn stack_data(&self) -> &[u32] {
         &self.buf[self.stack_bot..]
     }
 }

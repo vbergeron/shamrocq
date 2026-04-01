@@ -11,7 +11,7 @@
 //     1 | 0xFF  | offset:23     Closure (sentinel)
 //     1 | 0xFE  | offset:23     Bytes (sentinel)
 //
-//   Offsets are word-aligned: stored >> 2, decoded << 2.
+//   Offsets are word indices into the u32 arena buffer.
 
 const REF_BIT: u32 = 1 << 31;
 
@@ -62,16 +62,17 @@ impl Value {
 
     // -- Ctor (heap-allocated, arity >= 1): 1 | tag:8 | offset:23 --
 
-    pub const fn ctor(tag: u8, byte_offset: usize) -> Self {
-        Value(REF_BIT | ((tag as u32) << REF_TAG_SHIFT) | ((byte_offset >> 2) as u32))
+    pub const fn ctor(tag: u8, word_offset: usize) -> Self {
+        Value(REF_BIT | ((tag as u32) << REF_TAG_SHIFT) | (word_offset as u32))
     }
 
     pub const fn is_ctor(self) -> bool {
         self.is_reference() && self.ref_tag() < TAG_BYTES
     }
 
+    /// Word offset into the arena buffer.
     pub const fn offset(self) -> usize {
-        ((self.0 & REF_OFFSET_MASK) as usize) << 2
+        (self.0 & REF_OFFSET_MASK) as usize
     }
 
     const fn ref_tag(self) -> u8 {
@@ -113,8 +114,8 @@ impl Value {
 
     // -- Closure (reference): 1 | 0xFF | offset:23 --
 
-    pub const fn closure(byte_offset: usize) -> Self {
-        Value(REF_BIT | ((TAG_CLOSURE as u32) << REF_TAG_SHIFT) | ((byte_offset >> 2) as u32))
+    pub const fn closure(word_offset: usize) -> Self {
+        Value(REF_BIT | ((TAG_CLOSURE as u32) << REF_TAG_SHIFT) | (word_offset as u32))
     }
 
     pub const fn is_closure(self) -> bool {
@@ -127,8 +128,8 @@ impl Value {
 
     // -- Bytes (reference): 1 | 0xFE | offset:23 --
 
-    pub const fn bytes(byte_offset: usize) -> Self {
-        Value(REF_BIT | ((TAG_BYTES as u32) << REF_TAG_SHIFT) | ((byte_offset >> 2) as u32))
+    pub const fn bytes(word_offset: usize) -> Self {
+        Value(REF_BIT | ((TAG_BYTES as u32) << REF_TAG_SHIFT) | (word_offset as u32))
     }
 
     pub const fn is_bytes(self) -> bool {
