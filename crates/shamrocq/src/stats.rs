@@ -18,6 +18,9 @@ pub struct Stats {
 
     pub reclaim_count: u32,
     pub reclaim_bytes_total: u32,
+
+    pub gc_count: u32,
+    pub gc_bytes_reclaimed: u32,
 }
 
 #[cfg(feature = "stats")]
@@ -38,7 +41,10 @@ impl fmt::Display for Stats {
         writeln!(f, "    peak depth     {:>6}", self.exec_peak_call_depth)?;
         writeln!(f, "  reclaim")?;
         writeln!(f, "    count          {:>6}", self.reclaim_count)?;
-        write!(f,   "    bytes total    {:>6} B", self.reclaim_bytes_total)
+        writeln!(f, "    bytes total    {:>6} B", self.reclaim_bytes_total)?;
+        writeln!(f, "  gc")?;
+        writeln!(f, "    collections    {:>6}", self.gc_count)?;
+        write!(f,   "    bytes freed    {:>6} B", self.gc_bytes_reclaimed)
     }
 }
 

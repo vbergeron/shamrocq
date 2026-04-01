@@ -40,7 +40,7 @@ fn main() -> ! {
     let mut vm = Vm::new(buf);
     vm.load_program(&prog).unwrap_or_else(|e| vm_exit_err(e));
 
-    let n = 50;
+    let n = 256;
 
     let sorted = vm
         .call(funcs::SORT_SEQ, &[Value::integer(n)])

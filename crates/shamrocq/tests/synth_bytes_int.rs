@@ -17,7 +17,7 @@ fn str_hello_literal() {
 
     let hello = vm.global_value(c.funcs["str_hello"]);
     assert!(hello.is_bytes());
-    assert_eq!(hello.bytes_len(), 5);
+    assert_eq!(vm.bytes_len(hello), 5);
     assert_eq!(vm.arena.bytes_data(hello), b"hello");
 }
 
@@ -31,7 +31,7 @@ fn str_empty_literal() {
 
     let empty = vm.global_value(c.funcs["str_empty"]);
     assert!(empty.is_bytes());
-    assert_eq!(empty.bytes_len(), 0);
+    assert_eq!(vm.bytes_len(empty), 0);
     assert_eq!(vm.arena.bytes_data(empty), b"");
 }
 
@@ -74,7 +74,7 @@ fn str_eq_same() {
     let hello = vm.global_value(c.funcs["str_hello"]);
     let hello2 = vm.arena.alloc_bytes(b"hello").unwrap();
     let result = vm.call(c.funcs["str_eq"], &[hello, hello2]).unwrap();
-    assert!(result.is_ctor());
+    assert!(result.is_nullary_ctor());
     assert_eq!(result.tag(), 0); // TRUE
     print_stats("str_eq(hello,hello)", &vm);
 }
@@ -90,7 +90,7 @@ fn str_eq_different() {
     let hello = vm.global_value(c.funcs["str_hello"]);
     let world = vm.arena.alloc_bytes(b"world").unwrap();
     let result = vm.call(c.funcs["str_eq"], &[hello, world]).unwrap();
-    assert!(result.is_ctor());
+    assert!(result.is_nullary_ctor());
     assert_eq!(result.tag(), 1); // FALSE
 }
 
@@ -120,7 +120,7 @@ fn str_starts_with_h_true() {
 
     let hello = vm.global_value(c.funcs["str_hello"]);
     let result = vm.call(c.funcs["str_starts_with_h"], &[hello]).unwrap();
-    assert!(result.is_ctor());
+    assert!(result.is_nullary_ctor());
     assert_eq!(result.tag(), 0); // TRUE
     print_stats("str_starts_with_h(hello)", &vm);
 }
@@ -135,7 +135,7 @@ fn str_starts_with_h_false() {
 
     let world = vm.arena.alloc_bytes(b"world").unwrap();
     let result = vm.call(c.funcs["str_starts_with_h"], &[world]).unwrap();
-    assert!(result.is_ctor());
+    assert!(result.is_nullary_ctor());
     assert_eq!(result.tag(), 1); // FALSE
 }
 
@@ -149,6 +149,6 @@ fn str_starts_with_h_empty() {
 
     let empty = vm.global_value(c.funcs["str_empty"]);
     let result = vm.call(c.funcs["str_starts_with_h"], &[empty]).unwrap();
-    assert!(result.is_ctor());
+    assert!(result.is_nullary_ctor());
     assert_eq!(result.tag(), 1); // FALSE
 }

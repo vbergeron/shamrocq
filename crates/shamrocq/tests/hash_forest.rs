@@ -29,7 +29,7 @@ fn negb_true_is_false() {
     vm.load_program(&prog).unwrap();
 
     let result = vm
-        .call(c.func("negb"), &[Value::ctor(c.tag("True"), 0)])
+        .call(c.func("negb"), &[Value::nullary_ctor(c.tag("True"))])
         .unwrap();
     assert_eq!(result.tag(), c.tag("False"));
     print_stats("negb(true)", &vm);
@@ -44,7 +44,7 @@ fn negb_false_is_true() {
     vm.load_program(&prog).unwrap();
 
     let result = vm
-        .call(c.func("negb"), &[Value::ctor(c.tag("False"), 0)])
+        .call(c.func("negb"), &[Value::nullary_ctor(c.tag("False"))])
         .unwrap();
     assert_eq!(result.tag(), c.tag("True"));
     print_stats("negb(false)", &vm);
@@ -58,7 +58,7 @@ fn length_nil_is_zero() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::ctor(c.tag("Nil"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
     let result = vm.call(c.func("length"), &[nil]).unwrap();
     assert_eq!(result.tag(), c.tag("O"));
     print_stats("length(nil)", &vm);
@@ -72,8 +72,8 @@ fn length_singleton() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::ctor(c.tag("Nil"), 0);
-    let elem = Value::ctor(c.tag("O"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
+    let elem = Value::nullary_ctor(c.tag("O"));
     let list = vm.alloc_ctor(c.tag("Cons"), &[elem, nil]).unwrap();
 
     let result = vm.call(c.func("length"), &[list]).unwrap();
@@ -91,7 +91,7 @@ fn leb_zero_anything_is_true() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let zero = Value::ctor(c.tag("O"), 0);
+    let zero = Value::nullary_ctor(c.tag("O"));
     let one = vm.alloc_ctor(c.tag("S"), &[zero]).unwrap();
 
     let result = vm.call(c.func("leb"), &[zero, one]).unwrap();
@@ -107,9 +107,9 @@ fn map_negb_over_list() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::ctor(c.tag("Nil"), 0);
-    let t = Value::ctor(c.tag("True"), 0);
-    let f = Value::ctor(c.tag("False"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
+    let t = Value::nullary_ctor(c.tag("True"));
+    let f = Value::nullary_ctor(c.tag("False"));
     let list = vm.alloc_ctor(c.tag("Cons"), &[t, nil]).unwrap();
     let list = vm.alloc_ctor(c.tag("Cons"), &[f, list]).unwrap();
 
@@ -127,9 +127,9 @@ fn hforest_init_creates_forest() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let prev = Value::ctor(c.tag("O"), 0);
-    let value = Value::ctor(c.tag("O"), 0);
-    let prev_height = Value::ctor(c.tag("O"), 0);
+    let prev = Value::nullary_ctor(c.tag("O"));
+    let value = Value::nullary_ctor(c.tag("O"));
+    let prev_height = Value::nullary_ctor(c.tag("O"));
 
     let result = vm
         .call(c.func("hforest_init"), &[prev, value, prev_height])
@@ -152,7 +152,7 @@ fn nat_ord_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let zero = Value::ctor(c.tag("O"), 0);
+    let zero = Value::nullary_ctor(c.tag("O"));
     let one = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
     let two = peano(&mut vm, c.tag("O"), c.tag("S"), 2);
 
@@ -191,7 +191,7 @@ fn eqb_and_leb0_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
     let h = vm.global_value(c.func("nat_ord"));
 
@@ -220,9 +220,9 @@ fn merge_sorted_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
-    let nil = Value::ctor(c.tag("Nil"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
 
     // Simple: merge_sorted(nat_ord, [0], [1])
     let h = vm.global_value(c.func("nat_ord"));
@@ -248,9 +248,9 @@ fn merge_dedup_sorted_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
-    let nil = Value::ctor(c.tag("Nil"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
     let h = vm.global_value(c.func("nat_ord"));
 
     let l1 = vm.alloc_ctor(c.tag("Cons"), &[n0, nil]).unwrap();
@@ -277,7 +277,7 @@ fn merge_dedup_sorted_overlap() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
     let n2 = peano(&mut vm, c.tag("O"), c.tag("S"), 2);
     let n3 = peano(&mut vm, c.tag("O"), c.tag("S"), 3);
@@ -325,7 +325,7 @@ fn ordroot_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
 
     let h = vm.global_value(c.func("nat_ord"));
@@ -354,9 +354,9 @@ fn merge_roots_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
-    let nil = Value::ctor(c.tag("Nil"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
 
     let r1 = vm.alloc_ctor(c.tag("Build_root"), &[n0, n0]).unwrap();
     let r2 = vm.alloc_ctor(c.tag("Build_root"), &[n1, n0]).unwrap();
@@ -383,7 +383,7 @@ fn hforest_merge_basic() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
     let n3 = peano(&mut vm, c.tag("O"), c.tag("S"), 3);
 
@@ -406,9 +406,9 @@ fn hforest_lifecycle() {
 
     // --- List + higher-order function phase ---
 
-    let nil = Value::ctor(c.tag("Nil"), 0);
-    let t = Value::ctor(c.tag("True"), 0);
-    let f = Value::ctor(c.tag("False"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
+    let t = Value::nullary_ctor(c.tag("True"));
+    let f = Value::nullary_ctor(c.tag("False"));
 
     // Build [True, False, True, False]
     let list = vm.alloc_ctor(c.tag("Cons"), &[f, nil]).unwrap();
@@ -454,7 +454,7 @@ fn hforest_lifecycle() {
     // valid_roots removes roots whose hash appears as an edge child_hash (=value).
     // So we need prev ≠ value.
 
-    let n0 = Value::ctor(c.tag("O"), 0);
+    let n0 = Value::nullary_ctor(c.tag("O"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
     let n2 = peano(&mut vm, c.tag("O"), c.tag("S"), 2);
     let n3 = peano(&mut vm, c.tag("O"), c.tag("S"), 3);

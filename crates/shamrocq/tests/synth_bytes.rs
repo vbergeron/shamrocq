@@ -14,7 +14,7 @@ fn value_bytes_roundtrip() {
     assert!(!val.is_ctor());
     assert!(!val.is_integer());
     assert!(!val.is_callable());
-    assert_eq!(val.bytes_len(), 5);
+    assert_eq!(vm.bytes_len(val), 5);
     assert_eq!(vm.arena.bytes_data(val), b"hello");
 }
 
@@ -25,7 +25,7 @@ fn bytes_empty() {
 
     let val = vm.arena.alloc_bytes(b"").unwrap();
     assert!(val.is_bytes());
-    assert_eq!(val.bytes_len(), 0);
+    assert_eq!(vm.bytes_len(val), 0);
     assert_eq!(vm.arena.bytes_data(val), b"");
 }
 
@@ -37,7 +37,7 @@ fn bytes_non_aligned_lengths() {
     for len in [1, 2, 3, 4, 5, 6, 7, 8] {
         let data: Vec<u8> = (0..len).map(|i| i as u8).collect();
         let val = vm.arena.alloc_bytes(&data).unwrap();
-        assert_eq!(val.bytes_len(), len);
+        assert_eq!(vm.bytes_len(val), len);
         assert_eq!(vm.arena.bytes_data(val), &data[..]);
     }
 }
@@ -49,7 +49,7 @@ fn bytes_max_length() {
 
     let data = [0xABu8; 255];
     let val = vm.arena.alloc_bytes(&data).unwrap();
-    assert_eq!(val.bytes_len(), 255);
+    assert_eq!(vm.bytes_len(val), 255);
     assert_eq!(vm.arena.bytes_data(val), &data[..]);
 }
 
@@ -61,7 +61,7 @@ fn bytes_concat_basic() {
     let a = vm.arena.alloc_bytes(b"foo").unwrap();
     let b = vm.arena.alloc_bytes(b"bar").unwrap();
     let c = vm.arena.bytes_concat(a, b).unwrap();
-    assert_eq!(c.bytes_len(), 6);
+    assert_eq!(vm.bytes_len(c), 6);
     assert_eq!(vm.arena.bytes_data(c), b"foobar");
 }
 

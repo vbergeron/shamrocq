@@ -132,7 +132,7 @@ impl<'buf> Vm<'buf> {
     pub fn new(buf: &'buf mut [u8]) -> Self {
         Vm {
             arena: Arena::new(buf),
-            globals: [Value::ctor(0, 0); 64],
+            globals: [Value::integer(0); 64],
             n_globals: 0,
             code: &[],
             foreign_fns: [None; MAX_FOREIGN_FNS],
@@ -160,6 +160,19 @@ impl<'buf> Vm<'buf> {
             stack_bytes: self.arena.stack_used(),
             free_bytes: self.arena.free(),
         }
+    }
+
+    pub fn bytes_len(&self, val: Value) -> usize {
+        self.arena.bytes_len(val)
+    }
+
+    /// Run a GC cycle, using the globals array as extra roots.
+    fn run_gc(&mut self) {
+        let n = self.n_globals as usize;
+        #[allow(unused_variables)]
+        let gc_stats = self.arena.collect_garbage(&mut self.globals[..n]);
+        stat!(self, gc_count += 1);
+        stat!(self, gc_bytes_reclaimed += gc_stats.bytes_reclaimed as u32);
     }
 
     /// Write a binary dump of the VM state into `dst`.
@@ -275,7 +288,13 @@ impl<'buf> Vm<'buf> {
     }
 
     pub fn alloc_ctor(&mut self, tag: u8, fields: &[Value]) -> Result<Value, VmError> {
-        Ok(self.arena.alloc_ctor(tag, fields)?)
+        match self.arena.alloc_ctor(tag, fields) {
+            Ok(v) => Ok(v),
+            Err(_) => {
+                self.run_gc();
+                Ok(self.arena.alloc_ctor(tag, fields)?)
+            }
+        }
     }
 
     fn record_heap(&mut self) {
@@ -296,19 +315,10 @@ impl<'buf> Vm<'buf> {
     }
 
     fn references_heap_since(val: Value, start: usize) -> bool {
-        if val.is_integer() || val.is_function() {
+        if !val.is_reference() {
             return false;
         }
-        let offset = if val.is_ctor() {
-            val.offset()
-        } else if val.is_closure() {
-            val.closure_offset()
-        } else if val.is_bytes() {
-            val.bytes_offset()
-        } else {
-            return true;
-        };
-        offset >= start
+        val.offset() >= start
     }
 
     fn eval(&mut self, start_pc: usize) -> Result<Value, VmError> {
@@ -326,9 +336,18 @@ impl<'buf> Vm<'buf> {
         let mut call_depth: usize = 0;
         let mut frame_base = frame_base;
 
+        const GC_THRESHOLD: usize = 256;
+
         loop {
             if pc >= code.len() {
                 return Err(VmError::InvalidBytecode);
+            }
+
+            if self.arena.free() < GC_THRESHOLD {
+                self.run_gc();
+                if self.arena.free() < GC_THRESHOLD {
+                    return Err(VmError::Oom);
+                }
             }
 
             stat!(self, exec_instruction_count += 1);
@@ -342,7 +361,7 @@ impl<'buf> Vm<'buf> {
                     let arity = code[pc + 1] as usize;
                     pc += 2;
                     if arity == 0 {
-                        self.arena.stack_push(Value::ctor(tag, 0))?;
+                        self.arena.stack_push(Value::nullary_ctor(tag))?;
                     } else {
                         let val = self.arena.alloc_ctor_from_stack(tag, arity)?;
                         stat!(self, alloc_count_ctor += 1);
@@ -415,7 +434,7 @@ impl<'buf> Vm<'buf> {
                     } else {
                         let val = self.arena.alloc_closure_from_stack(code_addr, arity, n_cap)?;
                         stat!(self, alloc_count_closure += 1);
-                        stat!(self, alloc_bytes_total += ((1 + n_cap) * 4) as u32);
+                        stat!(self, alloc_bytes_total += ((2 + n_cap) * 4) as u32);
                         self.record_heap();
                         self.arena.stack_push(val)?;
                         self.record_stack();
@@ -574,7 +593,7 @@ impl<'buf> Vm<'buf> {
                     let n_args = code[pc + 2] as usize;
                     pc += 3;
 
-                    let mut tmp = [Value::ctor(0, 0); 16];
+                    let mut tmp = [Value::integer(0); 16];
                     for i in (0..n_args).rev() {
                         tmp[i] = self.arena.stack_pop();
                     }
@@ -599,7 +618,7 @@ impl<'buf> Vm<'buf> {
                     let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
                     let n_args = code[pc + 2] as usize;
 
-                    let mut tmp = [Value::ctor(0, 0); 16];
+                    let mut tmp = [Value::integer(0); 16];
                     for i in (0..n_args).rev() {
                         tmp[i] = self.arena.stack_pop();
                     }
@@ -752,14 +771,14 @@ impl<'buf> Vm<'buf> {
                     let b = self.arena.stack_pop().integer_value();
                     let a = self.arena.stack_pop().integer_value();
                     let tag = if a == b { crate::value::tags::TRUE } else { crate::value::tags::FALSE };
-                    self.arena.stack_push(Value::ctor(tag, 0))?;
+                    self.arena.stack_push(Value::nullary_ctor(tag))?;
                 }
 
                 op::LT => {
                     let b = self.arena.stack_pop().integer_value();
                     let a = self.arena.stack_pop().integer_value();
                     let tag = if a < b { crate::value::tags::TRUE } else { crate::value::tags::FALSE };
-                    self.arena.stack_push(Value::ctor(tag, 0))?;
+                    self.arena.stack_push(Value::nullary_ctor(tag))?;
                 }
 
                 op::BYTES => {
@@ -774,13 +793,13 @@ impl<'buf> Vm<'buf> {
 
                 op::BYTES_LEN => {
                     let v = self.arena.stack_pop();
-                    self.arena.stack_push(Value::integer(v.bytes_len() as i32))?;
+                    self.arena.stack_push(Value::integer(self.arena.bytes_len(v) as i32))?;
                 }
 
                 op::BYTES_GET => {
                     let idx = self.arena.stack_pop().integer_value() as usize;
                     let v = self.arena.stack_pop();
-                    if idx >= v.bytes_len() {
+                    if idx >= self.arena.bytes_len(v) {
                         return Err(VmError::IndexOutOfBounds);
                     }
                     let data = self.arena.bytes_data(v);
@@ -790,16 +809,16 @@ impl<'buf> Vm<'buf> {
                 op::BYTES_EQ => {
                     let b = self.arena.stack_pop();
                     let a = self.arena.stack_pop();
-                    let eq = a.bytes_len() == b.bytes_len()
+                    let eq = self.arena.bytes_len(a) == self.arena.bytes_len(b)
                         && self.arena.bytes_data(a) == self.arena.bytes_data(b);
                     let tag = if eq { crate::value::tags::TRUE } else { crate::value::tags::FALSE };
-                    self.arena.stack_push(Value::ctor(tag, 0))?;
+                    self.arena.stack_push(Value::nullary_ctor(tag))?;
                 }
 
                 op::BYTES_CONCAT => {
                     let b = self.arena.stack_pop();
                     let a = self.arena.stack_pop();
-                    if a.bytes_len() + b.bytes_len() > 255 {
+                    if self.arena.bytes_len(a) + self.arena.bytes_len(b) > 255 {
                         return Err(VmError::BytesOverflow);
                     }
                     let val = self.arena.bytes_concat(a, b)?;

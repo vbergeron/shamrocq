@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod arena;
+pub mod gc;
 pub mod stats;
 pub mod value;
 pub mod vm;

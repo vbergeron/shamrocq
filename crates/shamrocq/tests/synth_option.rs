@@ -16,7 +16,7 @@ fn option_map_some() {
     vm.load_program(&prog).unwrap();
 
     let negb = vm.global_value(c.func("negb"));
-    let some_true = vm.alloc_ctor(c.tag("Some"), &[Value::ctor(c.tag("True"), 0)]).unwrap();
+    let some_true = vm.alloc_ctor(c.tag("Some"), &[Value::nullary_ctor(c.tag("True"))]).unwrap();
     let result = vm.call(c.func("option_map"), &[negb, some_true]).unwrap();
     assert_eq!(result.tag(), c.tag("Some"));
     assert_eq!(vm.ctor_field(result, 0).tag(), c.tag("False"));
@@ -32,7 +32,7 @@ fn option_map_none() {
     vm.load_program(&prog).unwrap();
 
     let negb = vm.global_value(c.func("negb"));
-    let none = Value::ctor(c.tag("None_"), 0);
+    let none = Value::nullary_ctor(c.tag("None_"));
     let result = vm.call(c.func("option_map"), &[negb, none]).unwrap();
     assert_eq!(result.tag(), c.tag("None_"));
     print_stats("option_map(negb, None)", &vm);
@@ -48,7 +48,7 @@ fn option_bind_some() {
 
     // option_bind(wrap_some, Some(True)) = wrap_some(True) = Some(True)
     let wrap = vm.global_value(c.func("wrap_some"));
-    let some_true = vm.alloc_ctor(c.tag("Some"), &[Value::ctor(c.tag("True"), 0)]).unwrap();
+    let some_true = vm.alloc_ctor(c.tag("Some"), &[Value::nullary_ctor(c.tag("True"))]).unwrap();
     let result = vm.call(c.func("option_bind"), &[wrap, some_true]).unwrap();
     assert_eq!(result.tag(), c.tag("Some"));
     assert_eq!(vm.ctor_field(result, 0).tag(), c.tag("True"));
@@ -64,7 +64,7 @@ fn option_bind_none() {
     vm.load_program(&prog).unwrap();
 
     let negb = vm.global_value(c.func("negb"));
-    let none = Value::ctor(c.tag("None_"), 0);
+    let none = Value::nullary_ctor(c.tag("None_"));
     let result = vm.call(c.func("option_bind"), &[negb, none]).unwrap();
     assert_eq!(result.tag(), c.tag("None_"));
     print_stats("option_bind(negb, None)", &vm);
@@ -95,7 +95,7 @@ fn option_default_none() {
     vm.load_program(&prog).unwrap();
 
     let n0 = peano(&mut vm, c.tag("O"), c.tag("S"), 0);
-    let none = Value::ctor(c.tag("None_"), 0);
+    let none = Value::nullary_ctor(c.tag("None_"));
     let result = vm.call(c.func("option_default"), &[n0, none]).unwrap();
     assert_eq!(unpeano(&vm, c.tag("S"), result), 0);
     print_stats("option_default(0, None)", &vm);
@@ -109,8 +109,8 @@ fn option_is_some_and_none() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let some = vm.alloc_ctor(c.tag("Some"), &[Value::ctor(c.tag("O"), 0)]).unwrap();
-    let none = Value::ctor(c.tag("None_"), 0);
+    let some = vm.alloc_ctor(c.tag("Some"), &[Value::nullary_ctor(c.tag("O"))]).unwrap();
+    let none = Value::nullary_ctor(c.tag("None_"));
 
     let r1 = vm.call(c.func("option_is_some"), &[some]).unwrap();
     assert_eq!(r1.tag(), c.tag("True"));

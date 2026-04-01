@@ -13,7 +13,7 @@ fn setup() -> Compiled {
 }
 
 fn make_leaf(vm: &mut Vm, c: &Compiled) -> Value {
-    let nil = Value::ctor(c.tag("Nil"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
     vm.alloc_ctor(c.tag("Leaf"), &[nil]).unwrap()
 }
 
