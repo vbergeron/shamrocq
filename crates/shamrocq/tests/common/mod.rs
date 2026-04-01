@@ -48,7 +48,7 @@ pub fn setup(files: &[&str]) -> (Compiled, Vec<u8>, Vm<'static>) {
 }
 
 pub fn peano(vm: &mut Vm, tag_o: u8, tag_s: u8, n: u32) -> Value {
-    let mut v = Value::ctor(tag_o, 0);
+    let mut v = Value::nullary_ctor(tag_o);
     for _ in 0..n {
         v = vm.alloc_ctor(tag_s, &[v]).unwrap();
     }
@@ -74,7 +74,7 @@ pub fn list_to_vec(vm: &Vm, tag_cons: u8, mut v: Value) -> Vec<Value> {
 }
 
 pub fn make_list(vm: &mut Vm, tag_nil: u8, tag_cons: u8, items: &[Value]) -> Value {
-    let mut list = Value::ctor(tag_nil, 0);
+    let mut list = Value::nullary_ctor(tag_nil);
     for &item in items.iter().rev() {
         list = vm.alloc_ctor(tag_cons, &[item, list]).unwrap();
     }
@@ -101,6 +101,7 @@ pub fn print_stats(name: &str, vm: &Vm) {
                 "\"exec_tail_call_count\":{et},",
                 "\"exec_match_count\":{em},\"exec_peak_call_depth\":{ed},",
                 "\"reclaim_count\":{rc},\"reclaim_bytes_total\":{rb},",
+                "\"gc_count\":{gc},\"gc_bytes_reclaimed\":{gr},",
                 "\"final_heap_bytes\":{fh},\"final_stack_bytes\":{fs},\"final_free_bytes\":{ff}}}"
             ),
             ts = timestamp, co = commit, nm = name,
@@ -110,6 +111,7 @@ pub fn print_stats(name: &str, vm: &Vm) {
             et = s.exec_tail_call_count,
             em = s.exec_match_count, ed = s.exec_peak_call_depth,
             rc = s.reclaim_count, rb = s.reclaim_bytes_total,
+            gc = s.gc_count, gr = s.gc_bytes_reclaimed,
             fh = snap.heap_bytes, fs = snap.stack_bytes, ff = snap.free_bytes,
         );
         if let Ok(mut file) = std::fs::OpenOptions::new().append(true).create(true).open(&path) {

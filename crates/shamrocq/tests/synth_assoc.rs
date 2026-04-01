@@ -14,7 +14,7 @@ fn setup() -> Compiled {
 }
 
 fn make_assoc(vm: &mut Vm, c: &Compiled, pairs: &[(u32, u32)]) -> Value {
-    let mut list = Value::ctor(c.tag("Nil"), 0);
+    let mut list = Value::nullary_ctor(c.tag("Nil"));
     for &(k, v) in pairs.iter().rev() {
         let key = peano(vm, c.tag("O"), c.tag("S"), k);
         let val = peano(vm, c.tag("O"), c.tag("S"), v);

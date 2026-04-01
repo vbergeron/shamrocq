@@ -38,7 +38,7 @@ fn append_empty() {
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
-    let nil = Value::ctor(c.tag("Nil"), 0);
+    let nil = Value::nullary_ctor(c.tag("Nil"));
     let n1 = peano(&mut vm, c.tag("O"), c.tag("S"), 1);
     let l = make_list(&mut vm, c.tag("Nil"), c.tag("Cons"), &[n1]);
 

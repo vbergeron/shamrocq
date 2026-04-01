@@ -20,7 +20,7 @@ fn print_int(_vm: &mut Vm<'_>, arg: Value) -> Result<Value, VmError> {
 }
 
 fn make_list(vm: &mut Vm, items: &[Value]) -> Value {
-    let mut list = Value::ctor(ctors::NIL, 0);
+    let mut list = Value::nullary_ctor(ctors::NIL);
     for &item in items.iter().rev() {
         list = vm.alloc_ctor(ctors::CONS, &[item, list]).unwrap();
     }
