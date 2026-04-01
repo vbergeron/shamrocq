@@ -33,7 +33,7 @@ fn tco_simple_tail_recursion() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -52,7 +52,7 @@ fn tco_accumulator() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -73,7 +73,7 @@ fn tco_mutual_recursion() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 

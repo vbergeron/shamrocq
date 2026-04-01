@@ -1,12 +1,12 @@
 use shamrocq::Vm;
 
-fn make_vm(buf: &mut [u32]) -> Vm {
+fn make_vm(buf: &mut [u8]) -> Vm {
     Vm::new(buf)
 }
 
 #[test]
 fn value_bytes_roundtrip() {
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = make_vm(&mut buf);
 
     let val = vm.arena.alloc_bytes(b"hello").unwrap();
@@ -20,7 +20,7 @@ fn value_bytes_roundtrip() {
 
 #[test]
 fn bytes_empty() {
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = make_vm(&mut buf);
 
     let val = vm.arena.alloc_bytes(b"").unwrap();
@@ -31,7 +31,7 @@ fn bytes_empty() {
 
 #[test]
 fn bytes_non_aligned_lengths() {
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = make_vm(&mut buf);
 
     for len in [1, 2, 3, 4, 5, 6, 7, 8] {
@@ -44,7 +44,7 @@ fn bytes_non_aligned_lengths() {
 
 #[test]
 fn bytes_max_length() {
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = make_vm(&mut buf);
 
     let data = [0xABu8; 255];
@@ -55,7 +55,7 @@ fn bytes_max_length() {
 
 #[test]
 fn bytes_concat_basic() {
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = make_vm(&mut buf);
 
     let a = vm.arena.alloc_bytes(b"foo").unwrap();
@@ -67,7 +67,7 @@ fn bytes_concat_basic() {
 
 #[test]
 fn bytes_concat_empty() {
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = make_vm(&mut buf);
 
     let a = vm.arena.alloc_bytes(b"hello").unwrap();
@@ -82,7 +82,7 @@ fn bytes_concat_empty() {
 
 #[test]
 fn bytes_multiple_no_corruption() {
-    let mut buf = vec![0u32; 1024];
+    let mut buf = vec![0u8; 4096];
     let mut vm = make_vm(&mut buf);
 
     let a = vm.arena.alloc_bytes(b"abc").unwrap();

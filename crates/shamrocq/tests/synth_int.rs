@@ -30,7 +30,7 @@ fn value_integer_roundtrip() {
 fn int_abs_basic() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -44,7 +44,7 @@ fn int_abs_basic() {
 fn int_max_min() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -60,7 +60,7 @@ fn int_max_min() {
 fn int_factorial() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -76,7 +76,7 @@ fn int_factorial() {
 fn int_sum_to() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -92,7 +92,7 @@ fn int_sum_to() {
 fn int_pow() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -107,7 +107,7 @@ fn int_pow() {
 fn int_gcd() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -122,7 +122,7 @@ fn int_gcd() {
 fn int_fib() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -138,7 +138,7 @@ fn int_fib() {
 fn int_arithmetic_expression() {
     let c = setup_int();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 

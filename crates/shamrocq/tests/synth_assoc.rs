@@ -28,7 +28,7 @@ fn make_assoc(vm: &mut Vm, c: &Compiled, pairs: &[(u32, u32)]) -> Value {
 fn assoc_get_found() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -49,7 +49,7 @@ fn assoc_get_found() {
 fn assoc_get_not_found() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -66,7 +66,7 @@ fn assoc_get_not_found() {
 fn assoc_set_new_key() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -97,7 +97,7 @@ fn assoc_set_new_key() {
 fn assoc_set_overwrite() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -127,7 +127,7 @@ fn assoc_set_overwrite() {
 fn assoc_remove_existing() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -152,7 +152,7 @@ fn assoc_remove_existing() {
 fn assoc_keys_and_values() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 

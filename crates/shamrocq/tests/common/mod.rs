@@ -41,9 +41,9 @@ pub fn compile_scheme(files: &[&str]) -> Compiled {
     Compiled { blob: prog.serialize(), funcs, tags: tag_map }
 }
 
-pub fn setup(files: &[&str]) -> (Compiled, Vec<u32>, Vm<'static>) {
+pub fn setup(files: &[&str]) -> (Compiled, Vec<u8>, Vm<'static>) {
     let c = compile_scheme(files);
-    let buf = vec![0u32; 16384];
+    let buf = vec![0u8; 65536];
     (c, buf, unsafe { std::mem::zeroed() })
 }
 

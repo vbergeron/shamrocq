@@ -11,7 +11,7 @@ fn setup_bytes() -> common::Compiled {
 fn str_hello_literal() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -25,7 +25,7 @@ fn str_hello_literal() {
 fn str_empty_literal() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -39,7 +39,7 @@ fn str_empty_literal() {
 fn str_len_basic() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -53,7 +53,7 @@ fn str_len_basic() {
 fn str_first_byte() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -67,7 +67,7 @@ fn str_first_byte() {
 fn str_eq_same() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -83,7 +83,7 @@ fn str_eq_same() {
 fn str_eq_different() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -98,7 +98,7 @@ fn str_eq_different() {
 fn str_cat_basic() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -114,7 +114,7 @@ fn str_cat_basic() {
 fn str_starts_with_h_true() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -129,7 +129,7 @@ fn str_starts_with_h_true() {
 fn str_starts_with_h_false() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -143,7 +143,7 @@ fn str_starts_with_h_false() {
 fn str_starts_with_h_empty() {
     let c = setup_bytes();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 

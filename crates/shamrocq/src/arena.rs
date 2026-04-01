@@ -12,12 +12,17 @@ pub struct Arena<'a> {
 }
 
 impl<'a> Arena<'a> {
-    pub fn new(buf: &'a mut [u32]) -> Self {
-        let len = buf.len() * 4;
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        let words = buf.len() / 4;
+        let ptr = buf.as_mut_ptr() as *mut u32;
+        // Safety: ptr comes from a unique mutable reference; words * 4 ≤ buf.len().
+        // The caller must supply a 4-byte-aligned buffer (guaranteed for heap
+        // allocations and for static buffers declared with #[repr(align(4))]).
+        let buf32 = unsafe { core::slice::from_raw_parts_mut(ptr, words) };
         Arena {
-            buf,
+            buf: buf32,
             heap_top: 0,
-            stack_bot: len,
+            stack_bot: words * 4,
         }
     }
 

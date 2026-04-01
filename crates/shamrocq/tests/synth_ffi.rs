@@ -45,7 +45,7 @@ fn foreign_fn_multiarg_syntax() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.register_foreign(0, clamp_packed);
     vm.load_program(&prog).unwrap();
@@ -66,7 +66,7 @@ fn foreign_fn_direct_call() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.register_foreign(0, double_it);
     vm.load_program(&prog).unwrap();
@@ -85,7 +85,7 @@ fn foreign_fn_multiple() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.register_foreign(0, double_it);
     vm.register_foreign(1, negate_it);
@@ -104,7 +104,7 @@ fn foreign_fn_in_tail_position() {
     "#;
     let (blob, funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.register_foreign(0, double_it);
     vm.load_program(&prog).unwrap();
@@ -121,7 +121,7 @@ fn foreign_fn_called_via_apply() {
     assert!(ffn.is_callable());
     assert_eq!(ffn.fn_addr(), 0);
 
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
     vm.register_foreign(0, double_it);
 
@@ -138,7 +138,7 @@ fn foreign_fn_compiler_assigns_indices_in_order() {
     "#;
     let (blob, _funcs) = compile_inline(src);
     let prog = Program::from_blob(&blob).unwrap();
-    let mut buf = vec![0u32; 16384];
+    let mut buf = vec![0u8; 65536];
     let mut vm = Vm::new(&mut buf);
 
     fn always_zero(_vm: &mut Vm<'_>, _arg: Value) -> Result<Value, VmError> {
