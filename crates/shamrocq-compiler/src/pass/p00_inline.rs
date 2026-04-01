@@ -56,7 +56,9 @@ fn expr_size(expr: &Expr) -> usize {
         Expr::Ctor(_, fields) => 1 + fields.iter().map(expr_size).sum::<usize>(),
         Expr::PrimOp(_, args) => 1 + args.iter().map(expr_size).sum::<usize>(),
         Expr::Lambda(_, body) => 1 + expr_size(body),
+        Expr::Lambdas(params, body) => params.len() + expr_size(body),
         Expr::App(f, a) => 1 + expr_size(f) + expr_size(a),
+        Expr::AppN(f, args) => 1 + expr_size(f) + args.iter().map(expr_size).sum::<usize>(),
         Expr::If(c, t, e) => 1 + expr_size(c) + expr_size(t) + expr_size(e),
         Expr::Let(_, val, body) => 1 + expr_size(val) + expr_size(body),
         Expr::Letrec(_, val, body) => 1 + expr_size(val) + expr_size(body),
@@ -73,7 +75,9 @@ fn references_self(expr: &Expr, name: &str) -> bool {
         Expr::Ctor(_, fields) => fields.iter().any(|f| references_self(f, name)),
         Expr::PrimOp(_, args) => args.iter().any(|a| references_self(a, name)),
         Expr::Lambda(_, body) => references_self(body, name),
+        Expr::Lambdas(_, body) => references_self(body, name),
         Expr::App(f, a) => references_self(f, name) || references_self(a, name),
+        Expr::AppN(f, args) => references_self(f, name) || args.iter().any(|a| references_self(a, name)),
         Expr::If(c, t, e) => {
             references_self(c, name) || references_self(t, name) || references_self(e, name)
         }
@@ -98,7 +102,11 @@ fn inline_expr(expr: Expr, candidates: &HashMap<String, Expr>) -> Expr {
         Expr::App(f, a) => {
             Expr::App(Box::new(inline_expr(*f, candidates)), Box::new(inline_expr(*a, candidates)))
         }
+        Expr::AppN(f, args) => {
+            Expr::AppN(Box::new(inline_expr(*f, candidates)), args.into_iter().map(|a| inline_expr(a, candidates)).collect())
+        }
         Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(inline_expr(*body, candidates))),
+        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(inline_expr(*body, candidates))),
         Expr::Let(name, val, body) => {
             Expr::Let(name, Box::new(inline_expr(*val, candidates)), Box::new(inline_expr(*body, candidates)))
         }

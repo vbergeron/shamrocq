@@ -27,9 +27,12 @@ impl ResolvedPass for ArityAnalysis {
 pub fn lambda_arity(expr: &RExpr) -> u8 {
     let mut depth: u8 = 0;
     let mut e = expr;
-    while let RExpr::Lambda(body) = e {
-        depth += 1;
-        e = body;
+    loop {
+        match e {
+            RExpr::Lambda(body) => { depth += 1; e = body; }
+            RExpr::Lambdas(n, body) => { depth += n; e = body; }
+            _ => break,
+        }
     }
     depth
 }

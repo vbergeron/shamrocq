@@ -42,7 +42,9 @@ fn reduce(expr: RExpr) -> RExpr {
             }
             RExpr::Lambda(Box::new(body))
         }
+        RExpr::Lambdas(n, body) => RExpr::Lambdas(n, Box::new(reduce(*body))),
         RExpr::App(f, a) => RExpr::App(Box::new(reduce(*f)), Box::new(reduce(*a))),
+        RExpr::AppN(f, args) => RExpr::AppN(Box::new(reduce(*f)), args.into_iter().map(reduce).collect()),
         RExpr::Let(val, body) => {
             RExpr::Let(Box::new(reduce(*val)), Box::new(reduce(*body)))
         }

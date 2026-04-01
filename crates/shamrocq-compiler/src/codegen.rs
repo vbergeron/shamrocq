@@ -221,12 +221,18 @@ impl Compiler {
                 }
             }
 
-            RExpr::Lambda(body) => {
-                let mut arity: u8 = 1;
-                let mut inner: &RExpr = body;
-                while let RExpr::Lambda(next) = inner {
-                    arity += 1;
-                    inner = next;
+            RExpr::Lambda(_) | RExpr::Lambdas(_, _) => {
+                let (mut arity, mut inner) = match expr {
+                    RExpr::Lambdas(n, body) => (*n, body.as_ref()),
+                    RExpr::Lambda(body) => (1u8, body.as_ref()),
+                    _ => unreachable!(),
+                };
+                loop {
+                    match inner {
+                        RExpr::Lambda(next) => { arity += 1; inner = next; }
+                        RExpr::Lambdas(n, next) => { arity += n; inner = next; }
+                        _ => break,
+                    }
                 }
 
                 let mut free = Vec::new();
@@ -263,6 +269,20 @@ impl Compiler {
                         self.emitter.emit_tail_call1();
                     } else {
                         self.emitter.emit_call1();
+                    }
+                }
+            }
+
+            RExpr::AppN(func, args) => {
+                if !self.try_compile_flat_call(expr, ctx, tail) {
+                    self.compile_expr(func, ctx, false);
+                    for (i, arg) in args.iter().enumerate() {
+                        self.compile_expr(arg, ctx, false);
+                        if i == args.len() - 1 && tail {
+                            self.emitter.emit_tail_call1();
+                        } else {
+                            self.emitter.emit_call1();
+                        }
                     }
                 }
             }
@@ -475,11 +495,12 @@ impl Compiler {
                 continue;
             }
             let mut inner = &def.body;
-            for _ in 0..arity {
-                if let RExpr::Lambda(body) = inner {
-                    inner = body;
-                } else {
-                    break;
+            let mut peeled = 0u8;
+            while peeled < arity {
+                match inner {
+                    RExpr::Lambda(body) => { peeled += 1; inner = body; }
+                    RExpr::Lambdas(n, body) => { peeled += n; inner = body; }
+                    _ => break,
                 }
             }
             let addr = self.emitter.pos() as u16;
@@ -492,6 +513,12 @@ impl Compiler {
 }
 
 fn try_flatten_app<'a>(expr: &'a RExpr) -> Option<(u16, Vec<&'a RExpr>)> {
+    if let RExpr::AppN(func, args) = expr {
+        if let RExpr::Global(idx) = func.as_ref() {
+            return Some((*idx, args.iter().collect()));
+        }
+        return None;
+    }
     let mut args = Vec::new();
     let mut cur = expr;
     while let RExpr::App(func, arg) = cur {
@@ -530,9 +557,18 @@ fn collect_free(expr: &RExpr, bound: usize, free: &mut Vec<u8>) {
         RExpr::Lambda(body) => {
             collect_free(body, bound + 1, free);
         }
+        RExpr::Lambdas(n, body) => {
+            collect_free(body, bound + *n as usize, free);
+        }
         RExpr::App(f, a) => {
             collect_free(f, bound, free);
             collect_free(a, bound, free);
+        }
+        RExpr::AppN(f, args) => {
+            collect_free(f, bound, free);
+            for a in args {
+                collect_free(a, bound, free);
+            }
         }
         RExpr::Let(val, body) => {
             collect_free(val, bound, free);

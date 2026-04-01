@@ -15,7 +15,9 @@ pub enum RExpr {
     Ctor(u8, Vec<RExpr>),
     PrimOp(PrimOp, Vec<RExpr>),
     Lambda(Box<RExpr>),
+    Lambdas(u8, Box<RExpr>),
     App(Box<RExpr>, Box<RExpr>),
+    AppN(Box<RExpr>, Vec<RExpr>),
     Let(Box<RExpr>, Box<RExpr>),
     Letrec(Box<RExpr>, Box<RExpr>),
     Match(Box<RExpr>, Vec<RMatchCase>),
@@ -197,10 +199,28 @@ fn resolve_expr(
             Ok(RExpr::Lambda(Box::new(rbody)))
         }
 
+        Expr::Lambdas(params, body) => {
+            let mut inner = locals.to_vec();
+            for p in params {
+                inner.push(p.clone());
+            }
+            let rbody = resolve_expr(body, &inner, tags, globals)?;
+            Ok(RExpr::Lambdas(params.len() as u8, Box::new(rbody)))
+        }
+
         Expr::App(f, a) => {
             let rf = resolve_expr(f, locals, tags, globals)?;
             let ra = resolve_expr(a, locals, tags, globals)?;
             Ok(RExpr::App(Box::new(rf), Box::new(ra)))
+        }
+
+        Expr::AppN(f, args) => {
+            let rf = resolve_expr(f, locals, tags, globals)?;
+            let rargs = args
+                .iter()
+                .map(|a| resolve_expr(a, locals, tags, globals))
+                .collect::<Result<_, _>>()?;
+            Ok(RExpr::AppN(Box::new(rf), rargs))
         }
 
         Expr::If(c, t, e) => {

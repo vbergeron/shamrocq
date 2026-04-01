@@ -37,7 +37,11 @@ fn reduce(expr: Expr) -> Expr {
                 Expr::App(Box::new(func), Box::new(arg))
             }
         }
+        Expr::AppN(f, args) => {
+            Expr::AppN(Box::new(reduce(*f)), args.into_iter().map(reduce).collect())
+        }
         Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(reduce(*body))),
+        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(reduce(*body))),
         Expr::Let(name, val, body) => {
             Expr::Let(name, Box::new(reduce(*val)), Box::new(reduce(*body)))
         }

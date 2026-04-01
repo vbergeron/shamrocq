@@ -16,7 +16,9 @@ pub enum Expr {
     Ctor(String, Vec<Expr>),
     PrimOp(PrimOp, Vec<Expr>),
     Lambda(String, Box<Expr>),
+    Lambdas(Vec<String>, Box<Expr>),
     App(Box<Expr>, Box<Expr>),
+    AppN(Box<Expr>, Vec<Expr>),
     If(Box<Expr>, Box<Expr>, Box<Expr>),
     Let(String, Box<Expr>, Box<Expr>),
     Letrec(String, Box<Expr>, Box<Expr>),
@@ -98,13 +100,11 @@ pub fn desugar_program(sexps: &[Sexp]) -> Result<Vec<Define>, String> {
                                         .iter()
                                         .map(|p| Expr::Var(p.clone()))
                                         .collect();
-                                    let mut body = Expr::App(
+                                    let body = Expr::App(
                                         Box::new(Expr::Foreign(idx)),
                                         Box::new(Expr::Ctor(pack_tag, ctor_fields)),
                                     );
-                                    for param in param_names.iter().rev() {
-                                        body = Expr::Lambda(param.clone(), Box::new(body));
-                                    }
+                                    let body = Expr::Lambdas(param_names, Box::new(body));
                                     defs.push(Define { name, body });
                                 }
                                 _ => return Err(
@@ -218,7 +218,7 @@ fn desugar_lambda(items: &[Sexp]) -> Result<Expr, String> {
     Ok(Expr::Lambda(param, Box::new(body)))
 }
 
-/// (lambdas (a b c) body) -> Lambda("a", Lambda("b", Lambda("c", body)))
+/// (lambdas (a b c) body) -> Lambdas(["a", "b", "c"], body)
 fn desugar_lambdas(items: &[Sexp]) -> Result<Expr, String> {
     if items.len() != 3 {
         return Err("lambdas expects params and body".to_string());
@@ -226,25 +226,35 @@ fn desugar_lambdas(items: &[Sexp]) -> Result<Expr, String> {
     let params = items[1]
         .as_list()
         .ok_or("lambdas params must be a list")?;
-    let mut body = desugar_expr(&items[2])?;
-    for p in params.iter().rev() {
-        let name = p.as_atom().ok_or("lambdas param must be atom")?.to_string();
-        body = Expr::Lambda(name, Box::new(body));
-    }
-    Ok(body)
+    let param_names: Vec<String> = params
+        .iter()
+        .map(|p| {
+            p.as_atom()
+                .ok_or("lambdas param must be atom".to_string())
+                .map(|s| s.to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    let body = desugar_expr(&items[2])?;
+    Ok(Expr::Lambdas(param_names, Box::new(body)))
 }
 
-/// (@ f x y z) -> (((f x) y) z)
+/// (@ f x y z) -> AppN(f, [x, y, z])
 fn desugar_at(items: &[Sexp]) -> Result<Expr, String> {
     if items.len() < 2 {
         return Err("@ needs at least a function".to_string());
     }
-    let mut result = desugar_expr(&items[1])?;
-    for arg in &items[2..] {
-        let a = desugar_expr(arg)?;
-        result = Expr::App(Box::new(result), Box::new(a));
+    let func = desugar_expr(&items[1])?;
+    let args: Vec<Expr> = items[2..]
+        .iter()
+        .map(desugar_expr)
+        .collect::<Result<_, _>>()?;
+    if args.len() == 1 {
+        Ok(Expr::App(Box::new(func), Box::new(args.into_iter().next().unwrap())))
+    } else if args.is_empty() {
+        Ok(func)
+    } else {
+        Ok(Expr::AppN(Box::new(func), args))
     }
-    Ok(result)
 }
 
 fn desugar_if(items: &[Sexp]) -> Result<Expr, String> {
@@ -388,12 +398,18 @@ fn desugar_quasiquote(sexp: &Sexp) -> Result<Expr, String> {
 
 /// Regular function application: (f x) or (f x y ...)
 fn desugar_application(items: &[Sexp]) -> Result<Expr, String> {
-    let mut result = desugar_expr(&items[0])?;
-    for arg in &items[1..] {
-        let a = desugar_expr(arg)?;
-        result = Expr::App(Box::new(result), Box::new(a));
+    let func = desugar_expr(&items[0])?;
+    let args: Vec<Expr> = items[1..]
+        .iter()
+        .map(desugar_expr)
+        .collect::<Result<_, _>>()?;
+    if args.len() == 1 {
+        Ok(Expr::App(Box::new(func), Box::new(args.into_iter().next().unwrap())))
+    } else if args.is_empty() {
+        Ok(func)
+    } else {
+        Ok(Expr::AppN(Box::new(func), args))
     }
-    Ok(result)
 }
 
 #[cfg(test)]
@@ -437,20 +453,16 @@ mod tests {
         let defs = desugar("(define leb (lambdas (n m) (@ f n m)))");
         assert_eq!(defs.len(), 1);
         match &defs[0].body {
-            Expr::Lambda(p1, inner) => {
-                assert_eq!(p1, "n");
-                match inner.as_ref() {
-                    Expr::Lambda(p2, body) => {
-                        assert_eq!(p2, "m");
-                        match body.as_ref() {
-                            Expr::App(_, _) => {}
-                            other => panic!("expected App, got {:?}", other),
-                        }
+            Expr::Lambdas(params, body) => {
+                assert_eq!(params, &["n", "m"]);
+                match body.as_ref() {
+                    Expr::AppN(_, args) => {
+                        assert_eq!(args.len(), 2);
                     }
-                    other => panic!("expected inner Lambda, got {:?}", other),
+                    other => panic!("expected AppN, got {:?}", other),
                 }
             }
-            other => panic!("expected Lambda, got {:?}", other),
+            other => panic!("expected Lambdas, got {:?}", other),
         }
     }
 

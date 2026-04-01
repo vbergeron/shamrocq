@@ -6,6 +6,7 @@ pub mod pass;
 pub mod resolve;
 
 use codegen::CompiledProgram;
+use pass::PassConfig;
 use resolve::TagTable;
 
 pub const DEFAULT_MAX_PASS_ITERATIONS: usize = 1024;
@@ -13,6 +14,14 @@ pub const DEFAULT_MAX_PASS_ITERATIONS: usize = 1024;
 pub fn compile_sources(
     sources: &[&str],
     max_pass_iterations: usize,
+) -> Result<(CompiledProgram, TagTable), String> {
+    compile_sources_with_config(sources, max_pass_iterations, &PassConfig::new())
+}
+
+pub fn compile_sources_with_config(
+    sources: &[&str],
+    max_pass_iterations: usize,
+    pass_config: &PassConfig,
 ) -> Result<(CompiledProgram, TagTable), String> {
     let mut all_sexps = Vec::new();
     for src in sources {
@@ -23,7 +32,9 @@ pub fn compile_sources(
     for _ in 0..max_pass_iterations {
         let prev = defs.clone();
         for p in pass::expr_passes() {
-            defs = p.run(defs);
+            if pass_config.is_enabled(p.name()) {
+                defs = p.run(defs);
+            }
         }
         if defs == prev {
             break;
@@ -37,7 +48,9 @@ pub fn compile_sources(
     for _ in 0..max_pass_iterations {
         let prev = rdefs.clone();
         for p in pass::resolved_passes() {
-            rdefs = p.run(rdefs);
+            if pass_config.is_enabled(p.name()) {
+                rdefs = p.run(rdefs);
+            }
         }
         if rdefs == prev {
             break;

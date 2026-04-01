@@ -42,7 +42,9 @@ fn lower(expr: Expr) -> Expr {
             )
         }
         Expr::App(f, a) => Expr::App(Box::new(lower(*f)), Box::new(lower(*a))),
+        Expr::AppN(f, args) => Expr::AppN(Box::new(lower(*f)), args.into_iter().map(lower).collect()),
         Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(lower(*body))),
+        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(lower(*body))),
         Expr::Let(name, val, body) => {
             Expr::Let(name, Box::new(lower(*val)), Box::new(lower(*body)))
         }

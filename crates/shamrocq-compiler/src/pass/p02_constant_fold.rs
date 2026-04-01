@@ -67,7 +67,9 @@ fn fold(expr: Expr) -> Expr {
             Expr::If(Box::new(c), Box::new(t), Box::new(e))
         }
         Expr::App(f, a) => Expr::App(Box::new(fold(*f)), Box::new(fold(*a))),
+        Expr::AppN(f, args) => Expr::AppN(Box::new(fold(*f)), args.into_iter().map(fold).collect()),
         Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(fold(*body))),
+        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(fold(*body))),
         Expr::Let(name, val, body) => {
             Expr::Let(name, Box::new(fold(*val)), Box::new(fold(*body)))
         }

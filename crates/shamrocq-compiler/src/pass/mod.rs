@@ -6,7 +6,10 @@ pub mod p04_dead_binding;
 pub mod p05_case_known_ctor;
 pub mod p06_eta_reduce;
 pub mod p07_arity_analysis;
+pub mod p07b_arity_specialize;
 pub mod p08_anf;
+
+use std::collections::HashMap;
 
 use crate::desugar::Define;
 use crate::resolve::RDefine;
@@ -19,6 +22,46 @@ pub trait ExprPass {
 pub trait ResolvedPass {
     fn name(&self) -> &'static str;
     fn run(&self, defs: Vec<RDefine>) -> Vec<RDefine>;
+}
+
+/// Per-pass enable/disable overrides parsed from `--pass:name=yes/no`.
+#[derive(Default, Clone)]
+pub struct PassConfig {
+    overrides: HashMap<String, bool>,
+}
+
+impl PassConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(&mut self, name: &str, enabled: bool) {
+        self.overrides.insert(name.to_string(), enabled);
+    }
+
+    pub fn is_enabled(&self, name: &str) -> bool {
+        self.overrides.get(name).copied().unwrap_or(true)
+    }
+
+    /// Parse a `--pass:name=yes|no` flag. Returns an error message on bad syntax.
+    pub fn parse_flag(flag: &str) -> Result<(String, bool), String> {
+        let rest = flag.strip_prefix("--pass:")
+            .ok_or_else(|| format!("expected --pass:NAME=yes/no, got {}", flag))?;
+        let (name, val) = rest.split_once('=')
+            .ok_or_else(|| format!("expected --pass:NAME=yes/no, got {}", flag))?;
+        let enabled = match val {
+            "on" => true,
+            "off" => false,
+            _ => return Err(format!("expected yes/no for --pass:{}, got {}", name, val)),
+        };
+        Ok((name.to_string(), enabled))
+    }
+
+    pub fn all_pass_names() -> Vec<&'static str> {
+        let expr: Vec<&str> = expr_passes().iter().map(|p| p.name()).collect();
+        let resolved: Vec<&str> = resolved_passes().iter().map(|p| p.name()).collect();
+        expr.into_iter().chain(resolved).collect()
+    }
 }
 
 pub fn expr_passes() -> Vec<Box<dyn ExprPass>> {
@@ -36,6 +79,7 @@ pub fn resolved_passes() -> Vec<Box<dyn ResolvedPass>> {
         Box::new(p05_case_known_ctor::CaseOfKnownCtor),
         Box::new(p06_eta_reduce::EtaReduce),
         Box::new(p07_arity_analysis::ArityAnalysis),
+        Box::new(p07b_arity_specialize::AritySpecialize),
         Box::new(p08_anf::AnfNormalize),
     ]
 }

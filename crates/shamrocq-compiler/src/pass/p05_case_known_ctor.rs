@@ -55,7 +55,9 @@ fn optimize(expr: RExpr) -> RExpr {
             RExpr::Match(Box::new(scrut), cases)
         }
         RExpr::Lambda(body) => RExpr::Lambda(Box::new(optimize(*body))),
+        RExpr::Lambdas(n, body) => RExpr::Lambdas(n, Box::new(optimize(*body))),
         RExpr::App(f, a) => RExpr::App(Box::new(optimize(*f)), Box::new(optimize(*a))),
+        RExpr::AppN(f, args) => RExpr::AppN(Box::new(optimize(*f)), args.into_iter().map(optimize).collect()),
         RExpr::Let(val, body) => {
             RExpr::Let(Box::new(optimize(*val)), Box::new(optimize(*body)))
         }
@@ -112,9 +114,16 @@ fn subst_rec(expr: &RExpr, fields: &[RExpr], arity: usize, depth: usize) -> RExp
         RExpr::Lambda(body) => {
             RExpr::Lambda(Box::new(subst_rec(body, fields, arity, depth + 1)))
         }
+        RExpr::Lambdas(n, body) => {
+            RExpr::Lambdas(*n, Box::new(subst_rec(body, fields, arity, depth + *n as usize)))
+        }
         RExpr::App(f, a) => RExpr::App(
             Box::new(subst_rec(f, fields, arity, depth)),
             Box::new(subst_rec(a, fields, arity, depth)),
+        ),
+        RExpr::AppN(f, args) => RExpr::AppN(
+            Box::new(subst_rec(f, fields, arity, depth)),
+            args.iter().map(|a| subst_rec(a, fields, arity, depth)).collect(),
         ),
         RExpr::Let(val, body) => RExpr::Let(
             Box::new(subst_rec(val, fields, arity, depth)),
