@@ -23,43 +23,44 @@ long-running tasks.
 ## Architecture
 
 ```
-scheme/              Scheme sources (Rocq extractions + synthetic tests)
+scheme/                  Scheme sources (Rocq extractions + synthetic tests)
 crates/
-  shamrocq-compiler/ Build-time compiler: parse → desugar → resolve → ANF → codegen
-  shamrocq/          no_std runtime: arena, value representation, bytecode VM
+  shamrocq-compiler/     Build-time compiler: parse → optimize → resolve → codegen
+  shamrocq/              no_std runtime: arena, value representation, bytecode VM
+  shamrocq-bytecode/     Shared opcode definitions
+doc/                     Technical documentation (see doc/README.md)
+examples/
+  baremetal/             Complete STM32 Cortex-M4 firmware example
 ```
 
 ### Compiler pipeline
 
 1. **Parser** — S-expression reader
 2. **Desugarer** — expands `lambdas`, `@`, `quasiquote`/`unquote`, `match`
-3. **Resolver** — de Bruijn indexing, constructor tag interning
-4. **ANF normalizer** — lifts complex arguments into `let` bindings
-5. **Codegen** — emits a compact bytecode blob
+3. **Optimization passes** — inline, beta-reduce, constant fold, dead
+   binding elimination, case-of-known-ctor, eta-reduce
+4. **Resolver** — de Bruijn indexing, constructor tag interning
+5. **Arity analysis + ANF** — tags multi-arg globals for direct calls,
+   normalizes to A-normal form
+6. **Codegen** — emits a compact bytecode blob
 
-The compiler is available both as a library (used by `build.rs` to embed
-bytecode at compile time) and as a standalone CLI.
+See [doc/CODEGEN.md](doc/CODEGEN.md) for details.
 
 ### Runtime
 
 - **Values** are tagged 32-bit words: constructors, integers, byte strings,
   closures, and bare function pointers
-- **Heap** uses bump allocation inside the caller-provided buffer
+- **Heap** uses bump allocation; constructors carry an arity header word for
+  self-describing heap layout
 - **Stack** grows downward from the other end of the same buffer
-- **Closures** capture by value; recursive closures use `FIXPOINT`
-- **Direct calls** bypass the curried closure chain for known multi-arity globals
-- **Match** dispatches on constructor tags with `BIND`/`SLIDE` for field access
+- **Frame-local reclamation** reclaims heap memory on function return when
+  the result does not reference the frame's allocations
+- **Direct calls** (`CALL_N`) bypass the curried closure chain for known
+  multi-arity globals at exact arity
+- **Match** dispatches via O(1) jump table indexed by constructor tag
 
-### Generated modules
-
-`build.rs` produces two Rust modules from the compiled Scheme:
-
-- `funcs` — global function indices (`funcs::APPEND`, `funcs::NAT_ORD`, …)
-- `ctors` — constructor tag constants (`ctors::SOME`, `ctors::LEAF`, …)
-
-Core tags (`True`, `False`, `Nil`, `Cons`, `O`, `S`, …) live in
-`value::tags`.  Scheme-defined constructors get their constants generated
-automatically — no manual registration needed.
+See [doc/VM.md](doc/VM.md) for internals and [doc/BYTECODE.md](doc/BYTECODE.md)
+for the instruction set.
 
 ## Usage
 
@@ -111,6 +112,9 @@ let result = vm.call(funcs::NEGB, &[Value::ctor(tags::TRUE, 0)]).unwrap();
 assert_eq!(result.tag(), tags::FALSE);
 ```
 
+See [`examples/baremetal/`](examples/baremetal/) for a complete STM32
+firmware example with FFI, list manipulation, and semihosting output.
+
 ### In-tree development
 
 Within this repo, enabling the `integration` feature compiles all `.scm` files
@@ -125,9 +129,8 @@ Compiled sizes (release, `thumbv7em-none-eabihf`):
 
 | Component | Size |
 |-----------|------|
-| VM runtime (`.text`) | ~12 KB |
-| Bytecode (`hash_forest.scm`, 32 globals) | ~3 KB |
-| **Total flash** | **~15 KB** |
+| VM + app code (`.text`) | ~13 KB |
+| Bytecode (baremetal demo, 7 globals) | < 1 KB |
 
 ## Optional features
 
@@ -136,7 +139,8 @@ Compiled sizes (release, `thumbv7em-none-eabihf`):
   the repo's own integration tests; downstream users compile their own Scheme
   via the CLI.
 - **`stats`** — enables `vm.stats` and `vm.mem_snapshot()` for tracking
-  peak heap/stack usage, allocation counts, instruction counts, and call depth.
+  peak heap/stack usage, allocation counts, instruction counts, call depth,
+  and heap reclamation statistics.
 
 ## Tests
 
@@ -144,6 +148,30 @@ Compiled sizes (release, `thumbv7em-none-eabihf`):
 cargo test --features integration                  # without stats
 cargo test --features integration,stats            # with memory/execution statistics printed
 ```
+
+### Benchmarking
+
+Run tests with `stats` and capture results to a JSONL file:
+
+```sh
+BENCHMARK_FILE=benchmarks/run.jsonl \
+BENCHMARK_COMMIT=$(git rev-parse --short HEAD) \
+BENCHMARK_TIMESTAMP=$(date -Iseconds) \
+  cargo test --features stats -p shamrocq -- --nocapture
+```
+
+Each test that calls `print_stats` appends a JSON line with allocation counts,
+instruction counts, peak memory, and reclaim statistics.
+
+## Documentation
+
+See [`doc/README.md`](doc/README.md) for the full list:
+[VM internals](doc/VM.md) ·
+[Bytecode format](doc/BYTECODE.md) ·
+[Compiler pipeline](doc/CODEGEN.md) ·
+[FFI](doc/FFI.md) ·
+[Rocq extraction](doc/ROCQ.md) ·
+[Performance roadmap](doc/OPTIMIZE.md)
 
 ## License
 

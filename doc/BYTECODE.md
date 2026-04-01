@@ -189,7 +189,8 @@ a GC or indirection cell.
 0E
 ```
 
-Pop `arg`, pop `func`. Save `(return_pc, frame_base, env)` on the call stack.
+Pop `arg`, pop `func`. Push a 4-word frame header
+`[saved_fb, saved_pc, saved_env, saved_heap_top]` onto the stack.
 Set up a new frame with `arg`, jump to the function's code address.
 
 For closures, the closure itself becomes the `env` register (captures accessed
@@ -203,8 +204,8 @@ frame pushed.
 0F
 ```
 
-Pop `arg`, pop `func`. **Truncate** the current frame (reuse call depth).
-Set up `arg` in the recycled frame, jump. No call-stack growth — this is how
+Pop `arg`, pop `func`. **Truncate** the current frame (reuse the frame header).
+Set up `arg` in the recycled frame, jump. No stack growth — this is how
 tail recursion stays bounded.
 
 #### `CALL_N` (0x10)
@@ -213,10 +214,10 @@ tail recursion stays bounded.
 10 code_addr:u16le n_args:u8
 ```
 
-The `n_args` arguments are already on the stack. Save `(return_pc, frame_base,
-env)` on the call stack. Set up a new frame with all `n_args` arguments, jump
-to `code_addr`. No function Value on the stack — the target is statically
-known at compile time.
+The `n_args` arguments are already on the stack. Push a 4-word frame header
+`[saved_fb, saved_pc, saved_env, saved_heap_top]`. Set up a new frame with
+all `n_args` arguments, jump to `code_addr`. No function Value on the
+stack — the target is statically known at compile time.
 
 This is used for exact-arity calls to multi-arity globals. The compiler
 detects `App^N(Global(g), args)` where N equals the known arity of g and
@@ -239,8 +240,10 @@ the current frame, re-pushes the arguments, and jumps. No call-stack growth.
 ```
 
 Pop the result, discard the current frame. If call depth is zero, return to
-the Rust caller. Otherwise restore `(return_pc, frame_base, env)` from the
-call stack and push the result in the caller's frame.
+the Rust caller. Otherwise restore `(frame_base, pc, env, saved_heap_top)`
+from the frame header, attempt frame-local heap reclamation (see
+[VM.md](VM.md#frame-local-heap-reclamation)), and push the result in the
+caller's frame.
 
 #### `MATCH` (0x13)
 
@@ -384,7 +387,7 @@ Values are 32-bit words with a 3-bit kind tag in bits 31:29.
 
 | Kind | Tag | Value word payload | Heap layout | Heap size |
 |------|-----|--------------------|-------------|-----------|
-| Ctor | `000` | `tag:8 \| offset:21` | `field[0], field[1], ...` | `arity × 4` (0 if nullary) |
+| Ctor | `000` | `tag:8 \| offset:21` | `arity:u32, field[0], field[1], ...` | `(1 + arity) × 4` (0 if nullary) |
 | Integer | `001` | `value:29` (sign-extended) | *(none)* | 0 |
 | Bytes | `010` | `len:8 \| offset:21` | raw bytes, 4-aligned | `ceil(len/4) × 4` |
 | *(unused)* | `011` | — | — | — |

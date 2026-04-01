@@ -1,9 +1,9 @@
 # Compiler pipeline
 
-This document describes the four passes that turn Scheme source into a
-bytecode blob.
+This document describes the passes that turn Scheme source into a bytecode
+blob.
 
-Source files: `crates/shamrocq-compiler/src/{parser,desugar,resolve,codegen,bytecode}.rs`.
+Source files: `crates/shamrocq-compiler/src/{parser,desugar,pass/,resolve,codegen,bytecode}.rs`.
 
 ```
   .scm source
@@ -19,10 +19,19 @@ Source files: `crates/shamrocq-compiler/src/{parser,desugar,resolve,codegen,byte
  └────┬─────┘
       │ Vec<Define>
       ▼
+ ┌──────────────────┐
+ │ Expr-level passes │   (inline, beta-reduce, constant fold, if→match)
+ └────┬─────────────┘
+      │ Vec<Define>
+      ▼
  ┌──────────┐
  │ Resolver  │   RExpr, RDefine
- │  + ANF    │
  └────┬─────┘
+      │ Vec<RDefine>
+      ▼
+ ┌──────────────────────┐
+ │ Resolved-level passes │  (dead binding, case-of-known-ctor, eta-reduce,
+ └────┬─────────────────┘   arity analysis, ANF)
       │ Vec<RDefine>
       ▼
  ┌──────────┐
@@ -111,13 +120,13 @@ All functions are **single-argument** at this stage.  Multi-argument
 
 ---
 
-## 3. Resolver + ANF normalizer (`resolve.rs`)
+## 3. Resolver (`resolve.rs`)
 
 **Input:** `Vec<Define>` + mutable `TagTable` + mutable `GlobalTable`.
 
 **Output:** `Vec<RDefine>` — resolved IR with numeric indices only.
 
-This pass does three things in sequence:
+This pass does two things in sequence:
 
 ### 3a. Global registration (first pass)
 
@@ -138,34 +147,35 @@ Each definition's body is walked and every name is resolved:
   pre-registered; new constructors get the next available ID.
 - **`if`** is lowered to `Match` on `True`/`False` tags during this pass.
 
-### 3c. ANF normalization
+## 3½. Optimization passes (`pass/`)
 
-After resolution, each definition is rewritten into Administrative Normal
-Form: every sub-expression in argument position of `App` or field position
-of `Ctor` must be **atomic** (a `Local` or `Global` reference).
+Both the high-level IR (`Define`) and the resolved IR (`RDefine`) go through
+fixed-point optimization loops: each set of passes runs repeatedly until no
+more changes are made (up to `DEFAULT_MAX_PASS_ITERATIONS`).
 
-Non-atomic sub-expressions are lifted into `Let` bindings:
+### Expr-level passes (pre-resolution)
 
-```
-Before ANF:   App(f, App(g, x))
-After ANF:    Let(App(g, x),
-                App(shift(f), Local(0)))
-```
+| Pass | File | Effect |
+|------|------|--------|
+| Inline small globals | `p00_inline.rs` | Inline definitions whose body is small enough |
+| Beta-reduce | `p01_beta_reduce.rs` | `(lambda (x) body)(arg)` → `let x = arg in body` |
+| Constant fold | `p02_constant_fold.rs` | Evaluate known-constant arithmetic at compile time |
+| If → Match | `p03_if_to_match.rs` | Lower `if` to `match` on True/False |
 
-Constructor fields are lifted the same way:
+### Resolved-level passes (post-resolution)
 
-```
-Before ANF:   Ctor(Cons, [App(f, x), Ctor(Nil, [])])
-After ANF:    Let(App(f, x),
-                Ctor(Cons, [Local(0), Ctor(Nil, [])]))
-```
+| Pass | File | Effect |
+|------|------|--------|
+| Dead binding elimination | `p04_dead_binding.rs` | Remove unused `let` bindings |
+| Case of known ctor | `p05_case_known_ctor.rs` | `match (Ctor ...) { (Ctor ...) → e }` → `e` |
+| Eta-reduce | `p06_eta_reduce.rs` | `(lambda (x) (f x))` → `f` |
+| Arity analysis | `p07_arity_analysis.rs` | Tag multi-arg lambdas with their arity for `CALL_N` |
+| ANF normalization | `p08_anf.rs` | Lift non-atomic sub-expressions into `let` bindings |
 
-This guarantees the stack contains no intermediate temporaries when `BIND`
-pushes match-destructured fields — a critical invariant for the stack-based
-VM.
-
-De Bruijn indices of untouched sub-expressions are shifted upward to account
-for the newly introduced `Let` bindings.
+ANF normalization guarantees that every argument in `App` and every field in
+`Ctor` is atomic (a `Local` or `Global` reference).  This ensures the stack
+contains no intermediate temporaries when `BIND` pushes match-destructured
+fields — a critical invariant for the stack-based VM.
 
 ### Resolved IR
 
@@ -296,6 +306,23 @@ Lambda bodies are not emitted inline.  Instead:
 
 This means all lambda code appears after the global initializers in the
 bytecode stream.
+
+### Exact-arity calls (CALL_N / TAIL_CALL_N)
+
+When the compiler encounters `App^N(Global(g), args)` and the arity analysis
+pass has determined that `g` has arity N, it emits an exact-arity call
+instead of N chained `CALL1` instructions:
+
+1. Compile all N arguments onto the stack.
+2. Emit `CALL_N flat_entry N` (or `TAIL_CALL_N` in tail position).
+
+The callee is compiled with a **flat entry point** — `frame_depth = arity`,
+no captures, and de Bruijn indices map directly to `LOAD` slots.  This
+bypasses the curried closure chain entirely: no PAP allocations, no
+intermediate `CALL1` dispatches.
+
+Non-matching call sites (partial application, unknown callees, arity-1
+functions) continue to use curried `CALL1`.
 
 ### Output
 

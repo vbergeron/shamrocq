@@ -67,8 +67,8 @@ buffer; the arena partitions it into two regions that grow toward each other:
        heap_top ──┘    └── stack_bot
 ```
 
-- **Heap** grows upward from offset 0.  Bump-only: allocations never free.
-  All allocations are 4-byte aligned.
+- **Heap** grows upward from offset 0.  Bump-only: allocations are never
+  individually freed.  All allocations are 4-byte aligned.
 - **Stack** grows downward from the end.  Each slot is one `u32` word (4 bytes).
 - When `heap_top` meets `stack_bot` → `OutOfMemory`.
 - `arena.reset()` reclaims everything (sets `heap_top = 0`,
@@ -76,24 +76,36 @@ buffer; the arena partitions it into two regions that grow toward each other:
 
 ### Heap objects
 
-**Constructor** — `N` consecutive words (one per field):
+**Constructor** — arity header word + N field words:
 
 ```
-offset+0:  field_0 (raw Value u32)
-offset+4:  field_1
+offset+0:  arity (u32, low 8 bits used)
+offset+4:  field_0 (raw Value u32)
+offset+8:  field_1
   ...
-offset+4*(N-1): field_{N-1}
+offset+4*N: field_{N-1}
 ```
 
-The tag lives in the `Value` pointer, not on the heap — zero overhead per
-object.
+The tag lives in the `Value` pointer, not on the heap.  The arity header
+makes the heap self-describing: `ctor_arity(val)` reads it to determine
+the number of fields without external metadata.  Nullary constructors
+(arity 0) are encoded as immediate values and never touch the heap.
 
 **Closure** — header word + captured values:
 
 ```
-offset+0:  code_addr:u16 << 16 | n_captures:u16
+offset+0:  code_addr:u16 | arity:u8 | n_captures:u8
 offset+4:  capture_0 (raw Value u32)
 offset+8:  capture_1
+  ...
+```
+
+**Application (PAP)** — header word + accumulated arguments:
+
+```
+offset+0:  arity:4 | applied:4 | kind:3 | payload:21
+offset+4:  arg_0 (raw Value u32)
+offset+8:  arg_1
   ...
 ```
 
@@ -110,48 +122,79 @@ constructor constant).
 
 ### Stack frames
 
-Each function call establishes a frame within the arena stack:
+Each function call establishes a frame on the arena stack.  The frame header
+and the operand slots live in the same contiguous region:
 
 ```
-frame_base ──►  ┌─────────────┐
-                │ capture_0   │  slot 0
-                │ capture_1   │  slot 1
-                │   ...       │
-                │ capture_N-1 │  slot N-1
-                │ param       │  slot N
-                │ let_bind_0  │  slot N+1
-                │   ...       │    (grows with BIND / let)
-                └─────────────┘  ◄── stack top
+                     ┌─────────────┐
+                     │ saved_fb    │  frame_base + 0
+                     │ saved_pc    │  frame_base + 4
+                     │ saved_env   │  frame_base + 8
+                     │ saved_heap  │  frame_base + 12
+ frame_base + 16 ──► ├─────────────┤
+                     │ param / arg │  slot 0
+                     │ let_bind_0  │  slot 1
+                     │   ...       │    (grows with BIND / let)
+                     └─────────────┘  ◄── stack top
 ```
 
-`LOAD(idx)` reads slot `idx` counting from `frame_base` upward.
+The frame header is 16 bytes (4 words):
 
-### Call stack
+| Word | Contents |
+|------|----------|
+| `saved_fb` | Caller's `frame_base` |
+| `saved_pc` | Return address (byte offset into code) |
+| `saved_env` | Caller's closure environment |
+| `saved_heap` | `heap_top` at the time of the call (for reclamation) |
 
-The VM maintains a Rust-side `[CallFrame; 256]` array (not in the arena)
-storing `(return_pc, frame_base)` for each active non-tail call.
+`LOAD(idx)` reads slot `idx` counting from the first slot after the header.
 
-- `CALL`: saves the frame, increments depth, jumps.
-- `TAIL_CALL`: truncates the current frame and reuses it — **no depth
-  increase**, which is how recursive Scheme functions stay bounded.
-- `CALL_DIRECT`: like `CALL` but the target code address and argument count
-  are encoded in the bytecode. No function Value is on the stack and no
-  closure unpacking is needed. Used for fully-applied calls to known
-  multi-arity globals.
-- `TAIL_CALL_DIRECT`: tail-position variant of `CALL_DIRECT`. Reuses the
-  current frame like `TAIL_CALL`.
-- `RET`: pops the result, restores `frame_base` and `pc`.  At depth 0,
-  returns to the Rust caller.
+### Call mechanics
 
-Maximum call depth: **256**.  Exceeding it → `StackOverflow`.
+- `CALL1`: pops `arg` and `func`, pushes a 4-word frame header, sets up a
+  new frame with `arg`, jumps to the function's code address.
+- `TAIL_CALL1`: pops `arg` and `func`, truncates the current frame and
+  reuses it — **no frame growth**, which is how tail recursion stays bounded.
+- `CALL_N`: N arguments are already on the stack and the target code address
+  is statically known.  Pushes a frame header, sets up the N arguments as
+  slots, and jumps.  Used for exact-arity calls to known multi-arity globals.
+- `TAIL_CALL_N`: tail-position variant of `CALL_N`.  Reuses the current frame.
+- `RET`: pops the result, attempts heap reclamation (see below), restores
+  `frame_base`, `pc`, and `env` from the header, and pushes the result in
+  the caller's frame.  At depth 0, returns to the Rust caller.
+
+For closures, the closure itself becomes the `env` register (captures
+accessed via `LOAD_CAPTURE`).  For foreign functions, the host Rust function
+is called directly — no bytecode frame pushed.
+
+### Frame-local heap reclamation
+
+The `saved_heap` word in each frame header enables a lightweight form of
+memory reclamation without a garbage collector.
+
+On `RET` (and on `TAIL_CALL1` when returning through a frame), the VM
+checks whether the result references any heap memory allocated during this
+call.  If it does not, all heap memory in the range
+`[saved_heap, current_heap_top)` is reclaimed by resetting `heap_top`.
+
+The check (`references_heap_since`) inspects the result value's kind:
+
+- Integers and bare functions have no heap component → always safe.
+- Ctors, closures, applications, and byte strings → safe if their offset
+  is below `saved_heap` (i.e. they were allocated before this call).
+
+This is sound because the language is pure: older heap objects never contain
+pointers to newer allocations.  The only mutation (`FIXPOINT`) patches a
+closure within the current frame and cannot create a backward reference
+across frames.
 
 ### Tail call optimization
 
 When the compiler sees an application in tail position, it emits
-`TAIL_CALL` instead of `CALL`.  The VM truncates the current frame
-(`stack_truncate(frame_base)`) and lays down the new captures + argument
-in-place.  Since no `CallFrame` is pushed, tail-recursive loops use O(1)
-call stack.
+`TAIL_CALL1` (or `TAIL_CALL_N`) instead of `CALL1`.  The VM truncates the
+current frame (`set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES)`) and
+lays down the new arguments in-place.  Since no frame header is pushed,
+tail-recursive loops use O(1) stack.
 
 ### Recursive closures (FIXPOINT)
 
@@ -168,7 +211,8 @@ an indirection cell or trampoline.
 
 ### Pattern matching
 
-`MATCH` pops the scrutinee and scans a case table by tag.  When matched:
+`MATCH` pops the scrutinee and indexes a dense jump table by
+`scrutinee_tag - base_tag`.  When matched:
 
 - If arity > 0, the scrutinee is re-pushed, then `BIND(n)` destructures it
   into `n` field bindings on the stack.
@@ -178,6 +222,8 @@ an indirection cell or trampoline.
 
 In tail position, branches emit `RET` / `TAIL_CALL` directly — no `SLIDE`
 or `JMP` needed.
+
+Gap entries (tags in range but not matched) point to an `ERROR` instruction.
 
 ## Rust API
 
@@ -193,7 +239,7 @@ vm.load_program(&prog).unwrap();
 ### Calling functions
 
 ```rust
-// Direct call by global index (curried — applies one arg at a time):
+// Call by global index:
 let result = vm.call(funcs::ADD, &[n2, n3]).unwrap();
 
 // Apply a closure value:
@@ -205,16 +251,19 @@ let result = vm.apply(negb_closure, &[val]).unwrap();
 
 ```rust
 // Allocate a tagged constructor (e.g. cons cell):
-let pair = vm.alloc_ctor(tags::CONS, &[head, tail]).unwrap();
+let pair = vm.alloc_ctor(ctors::CONS, &[head, tail]).unwrap();
 
 // Read fields:
 let head = vm.ctor_field(pair, 0);
 let tail = vm.ctor_field(pair, 1);
 
+// Read arity from the heap header:
+let n = vm.ctor_arity(pair);  // 2
+
 // Nullary constructors need no allocation:
 let nil = Value::ctor(tags::NIL, 0);
 
-// Integers: Value::integer(n) creates a value; integer_value() extracts it:
+// Integers:
 let n = Value::integer(42);
 let x = n.integer_value();
 ```
@@ -235,9 +284,9 @@ vm.reset();
 | Error | Cause |
 |-------|-------|
 | `Oom` | Heap allocation or stack push would overlap the other region |
-| `StackOverflow` | Call depth exceeds 256 |
+| `StackOverflow` | Call depth exceeds arena capacity |
 | `MatchFailure { tag, pc }` | No case in a `MATCH` table matches the scrutinee tag |
-| `NotAClosure` | `CALL` / `TAIL_CALL` target is not a closure value |
+| `NotAClosure` | `CALL` / `TAIL_CALL` target is not callable |
 | `IndexOutOfBounds` | Byte string index out of range |
 | `BytesOverflow` | Byte string concatenation would exceed 255 bytes |
 | `InvalidBytecode` | Blob too short, PC out of bounds, or malformed header |
@@ -254,12 +303,12 @@ When compiled with `--features stats`, the VM records:
 | `alloc_count_closure` | Total closure allocations |
 | `alloc_bytes_total` | Total bytes allocated on the heap |
 | `exec_instruction_count` | Total instructions executed |
-| `exec_call_count` | Non-tail `CALL` count |
-| `exec_tail_call_count` | `TAIL_CALL` count |
-| `exec_direct_call_count` | Non-tail `CALL_DIRECT` count |
-| `exec_tail_direct_call_count` | `TAIL_CALL_DIRECT` count |
+| `exec_call_count` | Non-tail call count (`CALL1` + `CALL_N`) |
+| `exec_tail_call_count` | Tail call count (`TAIL_CALL1` + `TAIL_CALL_N`) |
 | `exec_match_count` | `MATCH` dispatch count |
 | `exec_peak_call_depth` | Deepest call stack reached |
+| `reclaim_count` | Number of frames where heap was reclaimed on return |
+| `reclaim_bytes_total` | Total bytes reclaimed via frame-local reclamation |
 
 Access via `vm.stats` (the `Stats` struct) and `vm.mem_snapshot()` (live
 heap/stack/free snapshot, available without the feature).
