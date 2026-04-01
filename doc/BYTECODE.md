@@ -21,7 +21,7 @@ A compiled blob is a single contiguous byte array:
 
 ```
 magic    : [u8; 4]           "SMRQ"
-version  : u16le             bytecode version (currently 4)
+version  : u16le             bytecode version (currently 5)
 n_globals: u16le             number of top-level defines
 
 For each global (repeated n_globals times):
@@ -56,8 +56,9 @@ Each instruction is a 1-byte opcode followed by zero or more inline operands.
 01 idx:u8
 ```
 
-Copy the value at frame slot `idx` and push it. Slot 0 is the function
-parameter (bottom of frame), higher indices are let-bindings.
+Copy the value at frame slot `idx` and push it. For closures, the first
+slots hold bound values (captures, then any previously applied arguments),
+followed by the fresh argument(s), then let-bindings.
 
 #### `LOAD2` (0x02)
 
@@ -74,15 +75,6 @@ Push two frame slots in one instruction. Equivalent to `LOAD a; LOAD b`.
 ```
 
 Push three frame slots in one instruction.
-
-#### `LOAD_CAPTURE` (0x04)
-
-```
-04 idx:u8
-```
-
-Push capture slot `idx` from the current closure's environment (accessed via
-the VM's `env` register, not the stack frame).
 
 #### `GLOBAL` (0x05)
 
@@ -159,14 +151,21 @@ If `n_captures` is 0, push a `Value::function(code_addr, arity)` — no heap
 allocation.
 
 Otherwise, pop `n_captures` values from the stack (top = last capture),
-heap-allocate a closure object, push the result.
+heap-allocate a closure object, push the result.  The `arity` field is the
+**total** number of values the function body expects on the stack
+(captures + parameters).
 
 Heap layout of a closure:
 
 ```
-word 0:  code_addr:u16 | arity:u8 | n_captures:u8
-word 1…: capture values (raw u32 each)
+word 0:  code_addr:u16 | arity:u8 | n_bound:u8
+word 1…: bound values (raw u32 each)
 ```
+
+Partial application extends an existing closure by appending additional
+bound values (via `extend_closure` in the arena).  When `n_bound + 1 ==
+arity`, the call is saturated and all bound values are pushed onto the stack
+as the first frame slots.
 
 #### `FIXPOINT` (0x0D)
 
@@ -175,7 +174,7 @@ word 1…: capture values (raw u32 each)
 ```
 
 Peek the closure at TOS. If `cap_idx != 0xFF`, mutate
-`closure.captures[cap_idx]` to point to the closure itself (self-reference).
+`closure.bound[cap_idx]` to point to the closure itself (self-reference).
 Then overwrite slot 1 (the `letrec` dummy) with the closure and pop TOS.
 
 This is the only mutation in the entire VM — it makes `letrec` work without
@@ -189,14 +188,12 @@ a GC or indirection cell.
 0E
 ```
 
-Pop `arg`, pop `func`. Push a 4-word frame header
-`[saved_fb, saved_pc, saved_env, saved_heap_top]` onto the stack.
-Set up a new frame with `arg`, jump to the function's code address.
-
-For closures, the closure itself becomes the `env` register (captures accessed
-via `LOAD_CAPTURE`). For bare functions (Function values), `env` is unused.
-For foreign functions, the host Rust function is called directly — no bytecode
-frame pushed.
+Pop `arg`, pop `func`. If the call is saturated (`n_bound + 1 == arity`),
+push a 3-word frame header `[saved_fb, saved_pc, saved_heap_top]`, push
+the closure's bound values followed by `arg`, and jump to the code address.
+For undersaturated calls, extend the closure with the new argument (no
+frame push).  For foreign functions, the host Rust function is called
+directly — no bytecode frame pushed.
 
 #### `TAIL_CALL1` (0x0F)
 
@@ -214,10 +211,10 @@ tail recursion stays bounded.
 10 code_addr:u16le n_args:u8
 ```
 
-The `n_args` arguments are already on the stack. Push a 4-word frame header
-`[saved_fb, saved_pc, saved_env, saved_heap_top]`. Set up a new frame with
-all `n_args` arguments, jump to `code_addr`. No function Value on the
-stack — the target is statically known at compile time.
+The `n_args` arguments are already on the stack. Push a 3-word frame header
+`[saved_fb, saved_pc, saved_heap_top]`. Set up a new frame with all `n_args`
+arguments, jump to `code_addr`. No function Value on the stack — the target
+is statically known at compile time.
 
 This is used for exact-arity calls to multi-arity globals. The compiler
 detects `App^N(Global(g), args)` where N equals the known arity of g and
@@ -240,8 +237,8 @@ the current frame, re-pushes the arguments, and jumps. No call-stack growth.
 ```
 
 Pop the result, discard the current frame. If call depth is zero, return to
-the Rust caller. Otherwise restore `(frame_base, pc, env, saved_heap_top)`
-from the frame header, attempt frame-local heap reclamation (see
+the Rust caller. Otherwise restore `(frame_base, pc, saved_heap_top)` from
+the frame header, attempt frame-local heap reclamation (see
 [VM.md](VM.md#frame-local-heap-reclamation)), and push the result in the
 caller's frame.
 
@@ -349,7 +346,6 @@ with `BytesOverflow` if the combined length exceeds 255.
 | `LOAD` | `0x01` | `idx:u8` | 2 |
 | `LOAD2` | `0x02` | `idx_a:u8 idx_b:u8` | 3 |
 | `LOAD3` | `0x03` | `idx_a:u8 idx_b:u8 idx_c:u8` | 4 |
-| `LOAD_CAPTURE` | `0x04` | `idx:u8` | 2 |
 | `GLOBAL` | `0x05` | `idx:u16le` | 3 |
 | `DROP` | `0x06` | `n:u8` | 2 |
 | `SLIDE` | `0x07` | `n:u8` | 2 |
@@ -392,8 +388,8 @@ Values are 32-bit words with a 3-bit kind tag in bits 31:29.
 | Bytes | `010` | `len:8 \| offset:21` | raw bytes, 4-aligned | `ceil(len/4) × 4` |
 | *(unused)* | `011` | — | — | — |
 | *(unused)* | `100` | — | — | — |
-| Application | `101` | `offset:21` | `[arity:4\|applied:4\|kind:3\|payload:21], arg[0..applied-1]` | `(1+applied) × 4` |
-| Closure | `110` | `offset:21` | `[code_addr:16\|arity:8\|n_cap:8], cap[0..n_cap-1]` | `(1+n_cap) × 4` |
+| *(unused)* | `101` | — | — | — |
+| Closure | `110` | `offset:21` | `[code_addr:16\|arity:8\|n_bound:8], bound[0..n_bound-1]` | `(1+n_bound) × 4` |
 | Function | `111` | `foreign:1 \| arity:4 \| addr:16` | *(none)* | 0 |
 
 Callable detection: bit 31 == 1 (kinds `100`–`111`).

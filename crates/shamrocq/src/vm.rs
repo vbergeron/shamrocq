@@ -116,7 +116,7 @@ impl<'a> Program<'a> {
     }
 }
 
-const FRAME_HEADER_BYTES: usize = 16;
+const FRAME_HEADER_BYTES: usize = 12;
 
 pub struct Vm<'buf> {
     pub arena: Arena<'buf>,
@@ -237,47 +237,33 @@ impl<'buf> Vm<'buf> {
                 return Err(VmError::NotAClosure);
             }
 
-            if func.is_application() {
-                let applied = self.arena.application_applied(func) as usize;
-                let arity = self.arena.application_arity(func) as usize;
-                if applied + 1 < arity {
-                    func = self.arena.extend_application(func, arg)?;
-                } else {
-                    let saved_pos = self.arena.stack_bot_pos();
-                    for i in 0..applied {
-                        let a = self.arena.application_arg(func, i);
-                        self.arena.stack_push(a)?;
-                    }
-                    self.arena.stack_push(arg)?;
-                    let callee = self.arena.application_callee(func);
-                    let (code_addr, env) = if callee.is_function() {
-                        (callee.fn_addr(), Value::ctor(0, 0))
-                    } else {
-                        (self.arena.closure_code(callee), callee)
-                    };
-                    func = self.eval_with_frame(code_addr as usize, saved_pos, env)?;
-                }
-            } else if func.is_foreign_fn() && func.fn_arity() == 1 {
+            if func.is_foreign_fn() && func.fn_arity() == 1 {
                 let f = self.foreign_fns[func.fn_addr() as usize]
                     .ok_or(VmError::InvalidBytecode)?;
                 func = f(self, arg)?;
-            } else {
-                let arity = if func.is_function() {
-                    func.fn_arity()
-                } else {
-                    self.arena.closure_arity(func)
-                };
+            } else if func.is_function() {
+                let arity = func.fn_arity();
                 if arity == 1 {
                     let saved_pos = self.arena.stack_bot_pos();
-                    let (code_addr, env) = if func.is_function() {
-                        (func.fn_addr(), Value::ctor(0, 0))
-                    } else {
-                        (self.arena.closure_code(func), func)
-                    };
                     self.arena.stack_push(arg)?;
-                    func = self.eval_with_frame(code_addr as usize, saved_pos, env)?;
+                    func = self.eval_with_frame(func.fn_addr() as usize, saved_pos)?;
                 } else {
-                    func = self.arena.alloc_application(func, arity, &[arg])?;
+                    func = self.arena.alloc_closure(func.fn_addr(), arity, &[arg])?;
+                }
+            } else {
+                let bound = self.arena.closure_bound_count(func);
+                let arity = self.arena.closure_arity(func) as usize;
+                if bound + 1 < arity {
+                    func = self.arena.extend_closure(func, arg)?;
+                } else {
+                    let saved_pos = self.arena.stack_bot_pos();
+                    let code_addr = self.arena.closure_code(func);
+                    for i in 0..bound {
+                        let v = self.arena.closure_bound(func, i);
+                        self.arena.stack_push(v)?;
+                    }
+                    self.arena.stack_push(arg)?;
+                    func = self.eval_with_frame(code_addr as usize, saved_pos)?;
                 }
             }
         }
@@ -317,8 +303,6 @@ impl<'buf> Vm<'buf> {
             val.offset()
         } else if val.is_closure() {
             val.closure_offset()
-        } else if val.is_application() {
-            val.application_offset()
         } else if val.is_bytes() {
             val.bytes_offset()
         } else {
@@ -329,20 +313,18 @@ impl<'buf> Vm<'buf> {
 
     fn eval(&mut self, start_pc: usize) -> Result<Value, VmError> {
         let fb = self.arena.stack_bot_pos();
-        self.eval_with_frame(start_pc, fb, Value::ctor(0, 0))
+        self.eval_with_frame(start_pc, fb)
     }
 
     fn eval_with_frame(
         &mut self,
         start_pc: usize,
         frame_base: usize,
-        start_env: Value,
     ) -> Result<Value, VmError> {
         let code = self.code;
         let mut pc = start_pc;
         let mut call_depth: usize = 0;
         let mut frame_base = frame_base;
-        let mut env = start_env;
 
         loop {
             if pc >= code.len() {
@@ -415,14 +397,6 @@ impl<'buf> Vm<'buf> {
                     self.record_stack();
                 }
 
-                op::LOAD_CAPTURE => {
-                    let idx = code[pc] as usize;
-                    pc += 1;
-                    let val = self.arena.closure_capture(env, idx);
-                    self.arena.stack_push(val)?;
-                    self.record_stack();
-                }
-
                 op::GLOBAL => {
                     let idx = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
                     pc += 2;
@@ -455,54 +429,15 @@ impl<'buf> Vm<'buf> {
                         return Err(VmError::NotAClosure);
                     }
 
-                    if func.is_application() {
-                        let applied = self.arena.application_applied(func) as usize;
-                        let arity = self.arena.application_arity(func) as usize;
-                        if applied + 1 < arity {
-                            let pap = self.arena.extend_application(func, arg)?;
-                            self.record_heap();
-                            self.arena.stack_push(pap)?;
-                            self.record_stack();
-                        } else {
-                            self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
-                            self.arena.stack_push(env)?;
-                            self.arena.stack_push(Value::from_raw(pc as u32))?;
-                            self.arena.stack_push(Value::from_raw(frame_base as u32))?;
-                            call_depth += 1;
-                            stat!(self, exec_call_count += 1);
-                            stat!(self, exec_peak_call_depth = max call_depth as u32);
-
-                            frame_base = self.arena.stack_bot_pos();
-                            for i in 0..applied {
-                                let a = self.arena.application_arg(func, i);
-                                self.arena.stack_push(a)?;
-                            }
-                            self.arena.stack_push(arg)?;
-                            self.record_stack();
-
-                            let callee = self.arena.application_callee(func);
-                            if callee.is_function() {
-                                env = Value::ctor(0, 0);
-                                pc = callee.fn_addr() as usize;
-                            } else {
-                                env = callee;
-                                pc = self.arena.closure_code(callee) as usize;
-                            }
-                        }
-                    } else if func.is_foreign_fn() && func.fn_arity() == 1 {
+                    if func.is_foreign_fn() && func.fn_arity() == 1 {
                         let f = self.foreign_fns[func.fn_addr() as usize]
                             .ok_or(VmError::InvalidBytecode)?;
                         let result = f(self, arg)?;
                         self.arena.stack_push(result)?;
-                    } else {
-                        let arity = if func.is_function() {
-                            func.fn_arity()
-                        } else {
-                            self.arena.closure_arity(func)
-                        };
+                    } else if func.is_function() {
+                        let arity = func.fn_arity();
                         if arity == 1 {
                             self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
-                            self.arena.stack_push(env)?;
                             self.arena.stack_push(Value::from_raw(pc as u32))?;
                             self.arena.stack_push(Value::from_raw(frame_base as u32))?;
                             call_depth += 1;
@@ -510,21 +445,40 @@ impl<'buf> Vm<'buf> {
                             stat!(self, exec_peak_call_depth = max call_depth as u32);
 
                             frame_base = self.arena.stack_bot_pos();
-                            let ca = if func.is_function() {
-                                env = Value::ctor(0, 0);
-                                func.fn_addr()
-                            } else {
-                                env = func;
-                                self.arena.closure_code(func)
-                            };
                             self.arena.stack_push(arg)?;
                             self.record_stack();
-                            pc = ca as usize;
+                            pc = func.fn_addr() as usize;
                         } else {
-                            let pap = self.arena.alloc_application(func, arity, &[arg])?;
+                            let cl = self.arena.alloc_closure(func.fn_addr(), arity, &[arg])?;
                             self.record_heap();
-                            self.arena.stack_push(pap)?;
+                            self.arena.stack_push(cl)?;
                             self.record_stack();
+                        }
+                    } else {
+                        let bound = self.arena.closure_bound_count(func);
+                        let arity = self.arena.closure_arity(func) as usize;
+                        if bound + 1 < arity {
+                            let cl = self.arena.extend_closure(func, arg)?;
+                            self.record_heap();
+                            self.arena.stack_push(cl)?;
+                            self.record_stack();
+                        } else {
+                            let code_addr = self.arena.closure_code(func);
+                            self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
+                            self.arena.stack_push(Value::from_raw(pc as u32))?;
+                            self.arena.stack_push(Value::from_raw(frame_base as u32))?;
+                            call_depth += 1;
+                            stat!(self, exec_call_count += 1);
+                            stat!(self, exec_peak_call_depth = max call_depth as u32);
+
+                            frame_base = self.arena.stack_bot_pos();
+                            for i in 0..bound {
+                                let v = self.arena.closure_bound(func, i);
+                                self.arena.stack_push(v)?;
+                            }
+                            self.arena.stack_push(arg)?;
+                            self.record_stack();
+                            pc = code_addr as usize;
                         }
                     }
                 }
@@ -536,49 +490,7 @@ impl<'buf> Vm<'buf> {
                         return Err(VmError::NotAClosure);
                     }
 
-                    if func.is_application() {
-                        let applied = self.arena.application_applied(func) as usize;
-                        let arity = self.arena.application_arity(func) as usize;
-                        if applied + 1 < arity {
-                            let pap = self.arena.extend_application(func, arg)?;
-                            self.record_heap();
-                            if call_depth == 0 {
-                                self.arena.set_stack_bot_pos(frame_base);
-                                self.arena.stack_push(pap)?;
-                                return Ok(pap);
-                            }
-                            let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                            let saved_env = self.arena.stack_read_at(frame_base + 8);
-                            let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
-                            self.try_reclaim(pap, saved_heap);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
-                            self.arena.stack_push(pap)?;
-                            call_depth -= 1;
-                            pc = saved_pc;
-                            frame_base = saved_fb;
-                            env = saved_env;
-                        } else {
-                            self.arena.set_stack_bot_pos(frame_base);
-                            stat!(self, exec_tail_call_count += 1);
-
-                            for i in 0..applied {
-                                let a = self.arena.application_arg(func, i);
-                                self.arena.stack_push(a)?;
-                            }
-                            self.arena.stack_push(arg)?;
-                            self.record_stack();
-
-                            let callee = self.arena.application_callee(func);
-                            if callee.is_function() {
-                                env = Value::ctor(0, 0);
-                                pc = callee.fn_addr() as usize;
-                            } else {
-                                env = callee;
-                                pc = self.arena.closure_code(callee) as usize;
-                            }
-                        }
-                    } else if func.is_foreign_fn() && func.fn_arity() == 1 {
+                    if func.is_foreign_fn() && func.fn_arity() == 1 {
                         let f = self.foreign_fns[func.fn_addr() as usize]
                             .ok_or(VmError::InvalidBytecode)?;
                         let result = f(self, arg)?;
@@ -589,54 +501,70 @@ impl<'buf> Vm<'buf> {
                         }
                         let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                         let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                        let saved_env = self.arena.stack_read_at(frame_base + 8);
-                        let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
+                        let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
                         self.try_reclaim(result, saved_heap);
                         self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
                         self.arena.stack_push(result)?;
                         call_depth -= 1;
                         pc = saved_pc;
                         frame_base = saved_fb;
-                        env = saved_env;
-                    } else {
-                        let arity = if func.is_function() {
-                            func.fn_arity()
-                        } else {
-                            self.arena.closure_arity(func)
-                        };
+                    } else if func.is_function() {
+                        let arity = func.fn_arity();
                         if arity == 1 {
                             self.arena.set_stack_bot_pos(frame_base);
                             stat!(self, exec_tail_call_count += 1);
-
-                            let ca = if func.is_function() {
-                                env = Value::ctor(0, 0);
-                                func.fn_addr()
-                            } else {
-                                env = func;
-                                self.arena.closure_code(func)
-                            };
                             self.arena.stack_push(arg)?;
                             self.record_stack();
-                            pc = ca as usize;
+                            pc = func.fn_addr() as usize;
                         } else {
-                            let pap = self.arena.alloc_application(func, arity, &[arg])?;
+                            let cl = self.arena.alloc_closure(func.fn_addr(), arity, &[arg])?;
                             self.record_heap();
                             if call_depth == 0 {
                                 self.arena.set_stack_bot_pos(frame_base);
-                                self.arena.stack_push(pap)?;
-                                return Ok(pap);
+                                self.arena.stack_push(cl)?;
+                                return Ok(cl);
                             }
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                             let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                            let saved_env = self.arena.stack_read_at(frame_base + 8);
-                            let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
-                            self.try_reclaim(pap, saved_heap);
+                            let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
+                            self.try_reclaim(cl, saved_heap);
                             self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
-                            self.arena.stack_push(pap)?;
+                            self.arena.stack_push(cl)?;
                             call_depth -= 1;
                             pc = saved_pc;
                             frame_base = saved_fb;
-                            env = saved_env;
+                        }
+                    } else {
+                        let bound = self.arena.closure_bound_count(func);
+                        let arity = self.arena.closure_arity(func) as usize;
+                        if bound + 1 < arity {
+                            let cl = self.arena.extend_closure(func, arg)?;
+                            self.record_heap();
+                            if call_depth == 0 {
+                                self.arena.set_stack_bot_pos(frame_base);
+                                self.arena.stack_push(cl)?;
+                                return Ok(cl);
+                            }
+                            let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
+                            let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
+                            let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
+                            self.try_reclaim(cl, saved_heap);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            self.arena.stack_push(cl)?;
+                            call_depth -= 1;
+                            pc = saved_pc;
+                            frame_base = saved_fb;
+                        } else {
+                            let code_addr = self.arena.closure_code(func);
+                            self.arena.set_stack_bot_pos(frame_base);
+                            stat!(self, exec_tail_call_count += 1);
+                            for i in 0..bound {
+                                let v = self.arena.closure_bound(func, i);
+                                self.arena.stack_push(v)?;
+                            }
+                            self.arena.stack_push(arg)?;
+                            self.record_stack();
+                            pc = code_addr as usize;
                         }
                     }
                 }
@@ -652,7 +580,6 @@ impl<'buf> Vm<'buf> {
                     }
 
                     self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
-                    self.arena.stack_push(env)?;
                     self.arena.stack_push(Value::from_raw(pc as u32))?;
                     self.arena.stack_push(Value::from_raw(frame_base as u32))?;
                     call_depth += 1;
@@ -665,7 +592,6 @@ impl<'buf> Vm<'buf> {
                     }
                     self.record_stack();
 
-                    env = Value::ctor(0, 0);
                     pc = code_addr;
                 }
 
@@ -686,7 +612,6 @@ impl<'buf> Vm<'buf> {
                     }
                     self.record_stack();
 
-                    env = Value::ctor(0, 0);
                     pc = code_addr;
                 }
 
@@ -699,15 +624,13 @@ impl<'buf> Vm<'buf> {
                     }
                     let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                     let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                    let saved_env = self.arena.stack_read_at(frame_base + 8);
-                    let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
+                    let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
                     self.try_reclaim(result, saved_heap);
                     self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
                     self.arena.stack_push(result)?;
                     call_depth -= 1;
                     pc = saved_pc;
                     frame_base = saved_fb;
-                    env = saved_env;
                 }
 
                 op::MATCH => {
@@ -778,7 +701,7 @@ impl<'buf> Vm<'buf> {
                     pc += 1;
                     let closure = self.arena.stack_peek(0);
                     if cap_idx != 0xFF {
-                        self.arena.closure_set_capture(closure, cap_idx, closure);
+                        self.arena.closure_set_bound(closure, cap_idx, closure);
                     }
                     self.arena.stack_set(1, closure);
                     self.arena.stack_pop();

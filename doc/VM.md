@@ -22,7 +22,7 @@ Every runtime value is a single `u32` word, split into three bit-fields:
 | Ctor | `000` | Constructor — 8-bit tag, 21-bit word offset (0 for nullary) |
 | Integer | `001` | Signed integer — tag bits extend payload to 29 bits |
 | Bytes | `010` | Byte string — 8-bit length, 21-bit word offset to data |
-| Closure | `110` | Heap-allocated closure — 21-bit word offset |
+| Closure | `110` | Heap-allocated closure / partial application — 21-bit word offset |
 | Bare fn | `111` | Zero-capture function — code address in payload, no heap |
 
 Offsets are stored as **word indices** (byte offset / 4). With 21 bits this
@@ -91,23 +91,21 @@ makes the heap self-describing: `ctor_arity(val)` reads it to determine
 the number of fields without external metadata.  Nullary constructors
 (arity 0) are encoded as immediate values and never touch the heap.
 
-**Closure** — header word + captured values:
+**Closure** — header word + bound values (captures and/or applied arguments):
 
 ```
-offset+0:  code_addr:u16 | arity:u8 | n_captures:u8
-offset+4:  capture_0 (raw Value u32)
-offset+8:  capture_1
+offset+0:  code_addr:u16 | arity:u8 | n_bound:u8
+offset+4:  bound_0 (raw Value u32)
+offset+8:  bound_1
   ...
 ```
 
-**Application (PAP)** — header word + accumulated arguments:
-
-```
-offset+0:  arity:4 | applied:4 | kind:3 | payload:21
-offset+4:  arg_0 (raw Value u32)
-offset+8:  arg_1
-  ...
-```
+Closures unify what were previously two separate kinds (Closure + Application).
+The `arity` field is the total number of values the function body expects on
+the stack (captures + parameters).  The `n_bound` field tracks how many of
+those are already provided.  When `n_bound + 1 == arity`, a call is saturated:
+all bound values are pushed onto the stack followed by the final argument,
+and execution jumps to `code_addr`.
 
 ## Execution model
 
@@ -126,33 +124,37 @@ Each function call establishes a frame on the arena stack.  The frame header
 and the operand slots live in the same contiguous region:
 
 ```
-                     ┌─────────────┐
-                     │ saved_fb    │  frame_base + 0
-                     │ saved_pc    │  frame_base + 4
-                     │ saved_env   │  frame_base + 8
-                     │ saved_heap  │  frame_base + 12
- frame_base + 16 ──► ├─────────────┤
-                     │ param / arg │  slot 0
-                     │ let_bind_0  │  slot 1
-                     │   ...       │    (grows with BIND / let)
-                     └─────────────┘  ◄── stack top
+                     ┌──────────────┐
+                     │ saved_fb     │  frame_base + 0
+                     │ saved_pc     │  frame_base + 4
+                     │ saved_heap   │  frame_base + 8
+ frame_base + 12 ──► ├──────────────┤
+                     │ bound_0      │  slot 0  (capture or applied arg)
+                     │ ...          │
+                     │ bound_{N-1}  │  slot N-1
+                     │ arg          │  slot N
+                     │ let_bind_0   │  slot N+1
+                     │   ...        │    (grows with BIND / let)
+                     └──────────────┘  ◄── stack top
 ```
 
-The frame header is 16 bytes (4 words):
+The frame header is 12 bytes (3 words):
 
 | Word | Contents |
 |------|----------|
 | `saved_fb` | Caller's `frame_base` |
 | `saved_pc` | Return address (byte offset into code) |
-| `saved_env` | Caller's closure environment |
 | `saved_heap` | `heap_top` at the time of the call (for reclamation) |
 
 `LOAD(idx)` reads slot `idx` counting from the first slot after the header.
+For closures, the bound values (captures first, then any previously applied
+arguments) occupy the lowest slots, followed by the fresh argument(s).
 
 ### Call mechanics
 
-- `CALL1`: pops `arg` and `func`, pushes a 4-word frame header, sets up a
-  new frame with `arg`, jumps to the function's code address.
+- `CALL1`: pops `arg` and `func`, pushes a 3-word frame header, sets up a
+  new frame with the closure's bound values followed by `arg`, jumps to the
+  code address.  For undersaturated calls, extends the closure instead.
 - `TAIL_CALL1`: pops `arg` and `func`, truncates the current frame and
   reuses it — **no frame growth**, which is how tail recursion stays bounded.
 - `CALL_N`: N arguments are already on the stack and the target code address
@@ -160,12 +162,13 @@ The frame header is 16 bytes (4 words):
   slots, and jumps.  Used for exact-arity calls to known multi-arity globals.
 - `TAIL_CALL_N`: tail-position variant of `CALL_N`.  Reuses the current frame.
 - `RET`: pops the result, attempts heap reclamation (see below), restores
-  `frame_base`, `pc`, and `env` from the header, and pushes the result in
+  `frame_base` and `pc` from the header, and pushes the result in
   the caller's frame.  At depth 0, returns to the Rust caller.
 
-For closures, the closure itself becomes the `env` register (captures
-accessed via `LOAD_CAPTURE`).  For foreign functions, the host Rust function
-is called directly — no bytecode frame pushed.
+For closures, the bound values (captures and any previously applied
+arguments) are pushed as the first stack slots in the new frame, accessible
+via `LOAD`.  For foreign functions, the host Rust function is called
+directly — no bytecode frame pushed.
 
 ### Frame-local heap reclamation
 
@@ -180,8 +183,8 @@ call.  If it does not, all heap memory in the range
 The check (`references_heap_since`) inspects the result value's kind:
 
 - Integers and bare functions have no heap component → always safe.
-- Ctors, closures, applications, and byte strings → safe if their offset
-  is below `saved_heap` (i.e. they were allocated before this call).
+- Ctors, closures, and byte strings → safe if their offset is below
+  `saved_heap` (i.e. they were allocated before this call).
 
 This is sound because the language is pure: older heap objects never contain
 pointers to newer allocations.  The only mutation (`FIXPOINT`) patches a
@@ -192,7 +195,7 @@ across frames.
 
 When the compiler sees an application in tail position, it emits
 `TAIL_CALL1` (or `TAIL_CALL_N`) instead of `CALL1`.  The VM truncates the
-current frame (`set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES)`) and
+current frame (`set_stack_bot_pos(frame_base)`) and
 lays down the new arguments in-place.  Since no frame header is pushed,
 tail-recursive loops use O(1) stack.
 

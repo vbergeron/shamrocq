@@ -72,20 +72,20 @@ impl<'a> Arena<'a> {
         (header & 0xFF) as usize
     }
 
-    // -- Closure: header = [code_addr:16 | arity:8 | n_cap:8] --
+    // -- Closure: header = [code_addr:16 | arity:8 | n_bound:8] --
 
     pub fn alloc_closure(
         &mut self,
         code_addr: u16,
         arity: u8,
-        captures: &[Value],
+        bound: &[Value],
     ) -> Result<Value, ArenaError> {
-        let n = captures.len();
+        let n = bound.len();
         let offset = self.alloc(1 + n)?;
         let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (n as u32);
         self.write_word(offset, header);
-        for (i, &c) in captures.iter().enumerate() {
-            self.write_word(offset + (1 + i) * 4, c.raw());
+        for (i, &v) in bound.iter().enumerate() {
+            self.write_word(offset + (1 + i) * 4, v.raw());
         }
         Ok(Value::closure(offset))
     }
@@ -94,14 +94,14 @@ impl<'a> Arena<'a> {
         &mut self,
         code_addr: u16,
         arity: u8,
-        n_cap: usize,
+        n_bound: usize,
     ) -> Result<Value, ArenaError> {
-        let offset = self.alloc(1 + n_cap)?;
-        let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (n_cap as u32);
+        let offset = self.alloc(1 + n_bound)?;
+        let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (n_bound as u32);
         self.write_word(offset, header);
-        for i in (0..n_cap).rev() {
-            let cap = self.stack_pop();
-            self.write_word(offset + (1 + i) * 4, cap.raw());
+        for i in (0..n_bound).rev() {
+            let val = self.stack_pop();
+            self.write_word(offset + (1 + i) * 4, val.raw());
         }
         Ok(Value::closure(offset))
     }
@@ -116,88 +116,40 @@ impl<'a> Arena<'a> {
         ((header >> 8) & 0xFF) as u8
     }
 
-    pub fn closure_capture_count(&self, val: Value) -> usize {
+    pub fn closure_bound_count(&self, val: Value) -> usize {
         let header = self.read_word(val.closure_offset());
         (header & 0xFF) as usize
     }
 
-    pub fn closure_capture(&self, val: Value, idx: usize) -> Value {
+    pub fn closure_bound(&self, val: Value, idx: usize) -> Value {
         let base = val.closure_offset();
         Value::from_raw(self.read_word(base + (1 + idx) * 4))
     }
 
-    pub fn closure_set_capture(&mut self, closure: Value, idx: usize, val: Value) {
+    pub fn closure_set_bound(&mut self, closure: Value, idx: usize, val: Value) {
         let base = closure.closure_offset();
         self.write_word(base + (1 + idx) * 4, val.raw());
     }
 
-    // -- Application: header = [arity:4 | applied:4 | callee_kind:3 | callee_payload:21] --
-
-    pub fn alloc_application(
+    pub fn extend_closure(
         &mut self,
-        callee: Value,
-        arity: u8,
-        args: &[Value],
-    ) -> Result<Value, ArenaError> {
-        let applied = args.len();
-        let offset = self.alloc(1 + applied)?;
-        let kind_bits = (callee.raw() >> 29) & 0x7;
-        let callee_bits = (kind_bits << 21) | (callee.raw() & PAYLOAD_21_RAW);
-        let header = ((arity as u32 & 0xF) << 28)
-            | ((applied as u32 & 0xF) << 24)
-            | callee_bits;
-        self.write_word(offset, header);
-        for (i, &a) in args.iter().enumerate() {
-            self.write_word(offset + (1 + i) * 4, a.raw());
-        }
-        Ok(Value::application(offset))
-    }
-
-    pub fn application_arity(&self, val: Value) -> u8 {
-        let header = self.read_word(val.application_offset());
-        ((header >> 28) & 0xF) as u8
-    }
-
-    pub fn application_applied(&self, val: Value) -> u8 {
-        let header = self.read_word(val.application_offset());
-        ((header >> 24) & 0xF) as u8
-    }
-
-    pub fn application_callee(&self, val: Value) -> Value {
-        let header = self.read_word(val.application_offset());
-        let callee_bits = header & 0x00FF_FFFF;
-        // Reconstruct the callee Value: kind bits are in 23:21, shift to 31:29
-        let kind = (callee_bits >> 21) & 0x7;
-        let payload = callee_bits & PAYLOAD_21_RAW;
-        Value::from_raw((kind << 29) | payload)
-    }
-
-    pub fn application_arg(&self, val: Value, idx: usize) -> Value {
-        let base = val.application_offset();
-        Value::from_raw(self.read_word(base + (1 + idx) * 4))
-    }
-
-    pub fn extend_application(
-        &mut self,
-        app: Value,
+        closure: Value,
         extra_arg: Value,
     ) -> Result<Value, ArenaError> {
-        let old_applied = self.application_applied(app) as usize;
-        let arity = self.application_arity(app);
-        let new_applied = old_applied + 1;
-        let offset = self.alloc(1 + new_applied)?;
-        let old_header = self.read_word(app.application_offset());
-        let callee_bits = old_header & 0x00FF_FFFF;
-        let header = ((arity as u32 & 0xF) << 28)
-            | ((new_applied as u32 & 0xF) << 24)
-            | callee_bits;
+        let old_bound = self.closure_bound_count(closure);
+        let new_bound = old_bound + 1;
+        let old_header = self.read_word(closure.closure_offset());
+        let code_addr = (old_header >> 16) as u16;
+        let arity = ((old_header >> 8) & 0xFF) as u8;
+        let offset = self.alloc(1 + new_bound)?;
+        let header = ((code_addr as u32) << 16) | ((arity as u32) << 8) | (new_bound as u32);
         self.write_word(offset, header);
-        for i in 0..old_applied {
-            let arg = self.application_arg(app, i);
-            self.write_word(offset + (1 + i) * 4, arg.raw());
+        for i in 0..old_bound {
+            let v = self.closure_bound(closure, i);
+            self.write_word(offset + (1 + i) * 4, v.raw());
         }
-        self.write_word(offset + (1 + old_applied) * 4, extra_arg.raw());
-        Ok(Value::application(offset))
+        self.write_word(offset + (1 + old_bound) * 4, extra_arg.raw());
+        Ok(Value::closure(offset))
     }
 
     // -- Bytes --
@@ -317,5 +269,3 @@ impl<'a> Arena<'a> {
         &self.buf[self.stack_bot..]
     }
 }
-
-const PAYLOAD_21_RAW: u32 = 0x001F_FFFF;

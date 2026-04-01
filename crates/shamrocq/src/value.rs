@@ -8,14 +8,13 @@
 //
 //   1xx = callable
 //     100  (unused)
-//     101  Application  offset:21           heap: [arity:4|applied:4|kind:3|payload:21], arg[0..applied-1]
-//     110  Closure      offset:21           heap: [code_addr:16|arity:8|n_cap:8], cap[0..n_cap-1]
+//     101  (unused)
+//     110  Closure      offset:21           heap: [code_addr:16|arity:8|n_bound:8], bound[0..n_bound-1]
 //     111  Function     foreign:1|arity:4|addr:16   (no heap)
 
 const KIND_CTOR: u32 = 0b000 << 29;
 const KIND_INTEGER: u32 = 0b001 << 29;
 const KIND_BYTES: u32 = 0b010 << 29;
-const KIND_APPLICATION: u32 = 0b101 << 29;
 const KIND_CLOSURE: u32 = 0b110 << 29;
 const KIND_FUNCTION: u32 = 0b111 << 29;
 
@@ -86,20 +85,6 @@ impl Value {
         ((self.0 & PAYLOAD_21) as usize) << 2
     }
 
-    // -- Application: 101 | offset:21 --
-
-    pub const fn application(byte_offset: usize) -> Self {
-        Value(KIND_APPLICATION | ((byte_offset >> 2) as u32))
-    }
-
-    pub const fn is_application(self) -> bool {
-        self.0 & KIND_MASK == KIND_APPLICATION
-    }
-
-    pub const fn application_offset(self) -> usize {
-        ((self.0 & PAYLOAD_21) as usize) << 2
-    }
-
     // -- Closure: 110 | offset:21 --
 
     pub const fn closure(byte_offset: usize) -> Self {
@@ -165,8 +150,6 @@ impl core::fmt::Debug for Value {
             write!(f, "Int({})", self.integer_value())
         } else if self.is_bytes() {
             write!(f, "Bytes(len={}, @{})", self.bytes_len(), self.bytes_offset())
-        } else if self.is_application() {
-            write!(f, "App(@{})", self.application_offset())
         } else if self.is_closure() {
             write!(f, "Closure(@{})", self.closure_offset())
         } else if self.is_foreign_fn() {

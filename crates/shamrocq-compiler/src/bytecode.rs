@@ -49,12 +49,6 @@ impl Emitter {
         }
     }
 
-    pub fn emit_load_capture(&mut self, idx: u8) {
-        self.flush_pending_loads();
-        self.code.push(op::LOAD_CAPTURE);
-        self.code.push(idx);
-    }
-
     pub fn emit_global(&mut self, idx: u16) {
         self.flush_pending_loads();
         self.code.push(op::GLOBAL);

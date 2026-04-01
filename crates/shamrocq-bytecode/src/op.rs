@@ -10,7 +10,6 @@
 ///   LOAD              idx:u8
 ///   LOAD2             idx_a:u8  idx_b:u8
 ///   LOAD3             idx_a:u8  idx_b:u8  idx_c:u8
-///   LOAD_CAPTURE      idx:u8
 ///   GLOBAL            idx:u16le
 ///   DROP              n:u8
 ///   SLIDE             n:u8
@@ -56,7 +55,6 @@
 pub const LOAD: u8 = 0x01;
 pub const LOAD2: u8 = 0x02;
 pub const LOAD3: u8 = 0x03;
-pub const LOAD_CAPTURE: u8 = 0x04;
 pub const GLOBAL: u8 = 0x05;
 pub const DROP: u8 = 0x06;
 pub const SLIDE: u8 = 0x07;

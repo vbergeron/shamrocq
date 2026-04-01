@@ -86,21 +86,13 @@ struct Compiler {
     flat_patches: Vec<(usize, u16)>,
 }
 
-enum LoadTarget {
-    Local(u8),
-    Capture(u8),
-}
-
-/// Compile-time context tracking how de Bruijn indices map to instructions.
+/// Compile-time context tracking how de Bruijn indices map to LOAD slots.
 ///
 /// Frame layout (bottom to top, on the operand stack):
-///   [param, bind_0, bind_1, ...]
+///   [cap_0, ..., cap_{N-1}, param_0, ..., param_{M-1}, let_0, ...]
 ///
-/// Captures are NOT on the stack; they live in the closure on the heap and
-/// are accessed via LOAD_CAPTURE through the VM's env register.
-///
-/// LOAD(idx) indexes locals from the bottom (idx=0 = param).
-/// LOAD_CAPTURE(idx) reads capture slot `idx` from the env closure.
+/// Captures occupy the first N slots, parameters follow, then let-bindings.
+/// Everything is accessed via LOAD — no separate LOAD_CAPTURE instruction.
 #[derive(Clone)]
 struct Ctx {
     captures: Vec<u8>,
@@ -122,14 +114,13 @@ impl Ctx {
         }
     }
 
-    fn load_target(&self, de_bruijn: u8) -> LoadTarget {
+    fn load_target(&self, de_bruijn: u8) -> u8 {
         let idx = de_bruijn as usize;
         if idx < self.frame_depth {
-            LoadTarget::Local((self.frame_depth - 1 - idx) as u8)
+            (self.captures.len() + self.frame_depth - 1 - idx) as u8
         } else {
             let parent_idx = (idx - self.frame_depth) as u8;
-            let cap_slot = self
-                .captures
+            self.captures
                 .iter()
                 .position(|&c| c == parent_idx)
                 .unwrap_or_else(|| {
@@ -137,8 +128,7 @@ impl Ctx {
                         "BUG: free var (parent de Bruijn {}) not in captures {:?}",
                         parent_idx, self.captures
                     )
-                }) as u8;
-            LoadTarget::Capture(cap_slot)
+                }) as u8
         }
     }
 
@@ -208,10 +198,7 @@ impl Compiler {
     fn compile_expr(&mut self, expr: &RExpr, ctx: &mut Ctx, tail: bool) {
         match expr {
             RExpr::Local(idx) => {
-                match ctx.load_target(*idx) {
-                    LoadTarget::Local(slot) => self.emitter.emit_load(slot),
-                    LoadTarget::Capture(slot) => self.emitter.emit_load_capture(slot),
-                }
+                self.emitter.emit_load(ctx.load_target(*idx));
                 if tail {
                     self.emitter.emit_ret();
                 }
@@ -250,7 +237,8 @@ impl Compiler {
                 self.emit_captures(&free, ctx);
 
                 let n_captures = free.len() as u8;
-                self.emitter.emit_closure(0, arity, n_captures);
+                let total_arity = arity + n_captures;
+                self.emitter.emit_closure(0, total_arity, n_captures);
                 let code_addr_pos = self.emitter.pos() - 4;
 
                 self.last_closure_captures = Some(free.clone());
@@ -371,10 +359,7 @@ impl Compiler {
 
     fn emit_captures(&mut self, free: &[u8], ctx: &Ctx) {
         for &parent_idx in free {
-            match ctx.load_target(parent_idx) {
-                LoadTarget::Local(slot) => self.emitter.emit_load(slot),
-                LoadTarget::Capture(slot) => self.emitter.emit_load_capture(slot),
-            }
+            self.emitter.emit_load(ctx.load_target(parent_idx));
         }
     }
 

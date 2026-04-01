@@ -176,7 +176,6 @@ fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
             op::LOAD => { pc += 1; }
             op::LOAD2 => { pc += 2; }
             op::LOAD3 => { pc += 3; }
-            op::LOAD_CAPTURE => { pc += 1; }
             op::GLOBAL => { pc += 2; }
             op::DROP => { pc += 1; }
             op::SLIDE => { pc += 1; }
@@ -258,7 +257,10 @@ fn build_labels(
             *n += 1;
             frames.insert(
                 cl.target,
-                FrameInfo { n_captures: cl.n_captures as usize, n_params: 1 },
+                FrameInfo {
+                    n_captures: cl.n_captures as usize,
+                    n_params: (cl.arity as usize).saturating_sub(cl.n_captures as usize),
+                },
             );
             labels.insert(cl.target, child_label);
         }
@@ -438,16 +440,6 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
                     );
                 }
             }
-            op::LOAD_CAPTURE => {
-                let idx = read_u8(code, pc)?;
-                pc += 1;
-                println!(
-                    "  {}{:04X}{}  {}{:<13}{}{:<17}{}; cap.{}{}",
-                    c.dim, instr_pc, c.rst,
-                    c.bld, "LOAD_CAPTURE", c.rst,
-                    idx, c.dim, idx, c.rst
-                );
-            }
             op::GLOBAL => {
                 let idx = read_u16le(code, pc)?;
                 pc += 2;
@@ -502,7 +494,7 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
                 if n_cap == 0 {
                     instr!(instr_pc, "CLOSURE", "fn code+0x{:04X}{} arity={}", code_addr, lbl, arity);
                 } else {
-                    instr!(instr_pc, "CLOSURE", "code+0x{:04X}{} arity={} captures={}", code_addr, lbl, arity, n_cap);
+                    instr!(instr_pc, "CLOSURE", "code+0x{:04X}{} arity={} bound={}", code_addr, lbl, arity, n_cap);
                 }
             }
             op::FIXPOINT => {
@@ -612,17 +604,21 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
 
 // ── LOAD annotation ──────────────────────────────────────────────────────────
 
-fn annotate_load(idx: usize, _n_captures: usize, n_params: usize, bind_depth: usize) -> String {
-    if n_params == 0 {
+fn annotate_load(idx: usize, n_captures: usize, n_params: usize, bind_depth: usize) -> String {
+    if n_params == 0 && n_captures == 0 {
         return String::new();
     }
-    if idx < n_params {
+    if idx < n_captures {
+        return format!("cap.{}", idx);
+    }
+    let after_cap = idx - n_captures;
+    if after_cap < n_params {
         if n_params == 1 {
             return "arg".to_string();
         }
-        return format!("arg.{}", idx);
+        return format!("arg.{}", after_cap);
     }
-    let let_idx = idx - n_params;
+    let let_idx = after_cap - n_params;
     if let_idx < bind_depth {
         return format!("let.{}", let_idx);
     }
@@ -781,10 +777,6 @@ fn fmt_value(raw: u32, c: &C) -> String {
             let len = ((raw >> 21) & 0xFF) as u8;
             let offset = ((raw & 0x001F_FFFF) as usize) << 2;
             format!("{}Bytes{}(len={}, @{})", c.cyn, c.rst, len, offset)
-        }
-        0b101 => {
-            let offset = ((raw & 0x001F_FFFF) as usize) << 2;
-            format!("App(@{})", offset)
         }
         0b110 => {
             let offset = ((raw & 0x001F_FFFF) as usize) << 2;
