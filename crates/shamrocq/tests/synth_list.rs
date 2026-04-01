@@ -11,7 +11,7 @@ fn setup() -> Compiled {
 fn append_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -34,7 +34,7 @@ fn append_basic() {
 fn append_empty() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -52,7 +52,7 @@ fn append_empty() {
 fn reverse_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -73,7 +73,7 @@ fn reverse_basic() {
 fn nth_found() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -93,7 +93,7 @@ fn nth_found() {
 fn nth_out_of_bounds() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -110,7 +110,7 @@ fn nth_out_of_bounds() {
 fn zip_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -134,7 +134,7 @@ fn zip_basic() {
 fn zip_uneven() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -154,7 +154,7 @@ fn zip_uneven() {
 fn lrange_100() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -170,7 +170,7 @@ fn lrange_100() {
 fn lrange_200() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -184,7 +184,7 @@ fn lrange_200() {
 fn map_over_lrange_100() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -201,7 +201,7 @@ fn map_over_lrange_100() {
 fn filter_lrange_100() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -217,7 +217,7 @@ fn filter_lrange_100() {
 fn reverse_lrange_100() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 

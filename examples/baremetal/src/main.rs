@@ -43,7 +43,7 @@ fn print_int_list(vm: &Vm, mut v: Value) {
 
 #[entry]
 fn main() -> ! {
-    let mut buf = [0u8; 10240];
+    let mut buf = [0u32; 2560];
     let prog = Program::from_blob(BYTECODE).unwrap();
     let mut vm = Vm::new(&mut buf);
 

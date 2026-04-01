@@ -11,7 +11,7 @@ fn setup() -> Compiled {
 fn add_zero_right() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -26,7 +26,7 @@ fn add_zero_right() {
 fn add_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -41,7 +41,7 @@ fn add_basic() {
 fn mul_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -56,7 +56,7 @@ fn mul_basic() {
 fn mul_by_zero() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -71,7 +71,7 @@ fn mul_by_zero() {
 fn sub_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -86,7 +86,7 @@ fn sub_basic() {
 fn sub_truncated() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -101,7 +101,7 @@ fn sub_truncated() {
 fn min_nat_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 
@@ -116,7 +116,7 @@ fn min_nat_basic() {
 fn max_nat_basic() {
     let c = setup();
     let prog = Program::from_blob(&c.blob).unwrap();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u32; 16384];
     let mut vm = Vm::new(&mut buf);
     vm.load_program(&prog).unwrap();
 

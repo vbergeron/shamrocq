@@ -6,14 +6,14 @@ pub enum ArenaError {
 }
 
 pub struct Arena<'a> {
-    buf: &'a mut [u8],
-    heap_top: usize,
-    stack_bot: usize,
+    buf: &'a mut [u32],
+    heap_top: usize,  // byte offset
+    stack_bot: usize, // byte offset
 }
 
 impl<'a> Arena<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        let len = buf.len();
+    pub fn new(buf: &'a mut [u32]) -> Self {
+        let len = buf.len() * 4;
         Arena {
             buf,
             heap_top: 0,
@@ -23,15 +23,11 @@ impl<'a> Arena<'a> {
 
     pub fn reset(&mut self) {
         self.heap_top = 0;
-        self.stack_bot = self.buf.len();
-    }
-
-    fn align4(offset: usize) -> usize {
-        (offset + 3) & !3
+        self.stack_bot = self.buf.len() * 4;
     }
 
     pub fn alloc(&mut self, words: usize) -> Result<usize, ArenaError> {
-        let base = Self::align4(self.heap_top);
+        let base = self.heap_top;
         let end = base + words * 4;
         if end > self.stack_bot {
             return Err(ArenaError::OutOfMemory);
@@ -197,15 +193,26 @@ impl<'a> Arena<'a> {
     pub fn alloc_bytes(&mut self, data: &[u8]) -> Result<Value, ArenaError> {
         let len = data.len();
         let words = (len + 3) / 4;
-        let offset = self.alloc(words)?;
-        self.buf[offset..offset + len].copy_from_slice(data);
-        Ok(Value::bytes(len as u8, offset))
+        let byte_offset = self.alloc(words)?;
+        // Safety: byte_offset is word-aligned and within the buffer; we write
+        // exactly `len` bytes which fits within the `words` allocated words.
+        unsafe {
+            let dst = core::slice::from_raw_parts_mut(
+                self.buf[byte_offset >> 2..].as_mut_ptr() as *mut u8,
+                len,
+            );
+            dst.copy_from_slice(data);
+        }
+        Ok(Value::bytes(len as u8, byte_offset))
     }
 
     pub fn bytes_data(&self, val: Value) -> &[u8] {
-        let offset = val.bytes_offset();
+        let word_off = val.bytes_offset() >> 2;
         let len = val.bytes_len();
-        &self.buf[offset..offset + len]
+        // Safety: word_off and len are within the allocated heap region.
+        unsafe {
+            core::slice::from_raw_parts(self.buf[word_off..].as_ptr() as *const u8, len)
+        }
     }
 
     pub fn bytes_concat(&mut self, a: Value, b: Value) -> Result<Value, ArenaError> {
@@ -215,10 +222,18 @@ impl<'a> Arena<'a> {
         let b_len = b.bytes_len();
         let total = a_len + b_len;
         let words = (total + 3) / 4;
-        let offset = self.alloc(words)?;
-        self.buf.copy_within(a_off..a_off + a_len, offset);
-        self.buf.copy_within(b_off..b_off + b_len, offset + a_len);
-        Ok(Value::bytes(total as u8, offset))
+        let byte_offset = self.alloc(words)?;
+        // Safety: all offsets are word-aligned and within the buffer. The new
+        // allocation is always above the sources (bump allocator), so there is
+        // no overlap.
+        unsafe {
+            let dst = self.buf[byte_offset >> 2..].as_mut_ptr() as *mut u8;
+            let src_a = self.buf[a_off >> 2..].as_ptr() as *const u8;
+            let src_b = self.buf[b_off >> 2..].as_ptr() as *const u8;
+            core::ptr::copy_nonoverlapping(src_a, dst, a_len);
+            core::ptr::copy_nonoverlapping(src_b, dst.add(a_len), b_len);
+        }
+        Ok(Value::bytes(total as u8, byte_offset))
     }
 
     // -- stack (grows downward) --
@@ -247,11 +262,11 @@ impl<'a> Arena<'a> {
     }
 
     pub fn stack_depth(&self) -> usize {
-        (self.buf.len() - self.stack_bot) / 4
+        (self.buf.len() * 4 - self.stack_bot) / 4
     }
 
     pub fn stack_truncate(&mut self, depth: usize) {
-        self.stack_bot = self.buf.len() - depth * 4;
+        self.stack_bot = self.buf.len() * 4 - depth * 4;
     }
 
     pub fn stack_bot_pos(&self) -> usize {
@@ -270,15 +285,16 @@ impl<'a> Arena<'a> {
         self.write_word(byte_pos, val.raw());
     }
 
-    // -- raw word access (little-endian) --
+    // -- raw word access --
 
-    fn write_word(&mut self, offset: usize, val: u32) {
-        let bytes = val.to_le_bytes();
-        self.buf[offset..offset + 4].copy_from_slice(&bytes);
+    #[inline]
+    fn write_word(&mut self, byte_offset: usize, val: u32) {
+        self.buf[byte_offset >> 2] = val;
     }
 
-    fn read_word(&self, offset: usize) -> u32 {
-        u32::from_le_bytes(self.buf[offset..offset + 4].try_into().unwrap())
+    #[inline]
+    fn read_word(&self, byte_offset: usize) -> u32 {
+        self.buf[byte_offset >> 2]
     }
 
     pub fn heap_used(&self) -> usize {
@@ -286,7 +302,7 @@ impl<'a> Arena<'a> {
     }
 
     pub fn stack_used(&self) -> usize {
-        self.buf.len() - self.stack_bot
+        self.buf.len() * 4 - self.stack_bot
     }
 
     pub fn free(&self) -> usize {
@@ -294,15 +310,23 @@ impl<'a> Arena<'a> {
     }
 
     pub fn buf_len(&self) -> usize {
-        self.buf.len()
+        self.buf.len() * 4
     }
 
     pub fn heap_data(&self) -> &[u8] {
-        &self.buf[..self.heap_top]
+        // Safety: heap_top is a byte count; the buf pointer is valid for that many bytes.
+        unsafe { core::slice::from_raw_parts(self.buf.as_ptr() as *const u8, self.heap_top) }
     }
 
     pub fn stack_data(&self) -> &[u8] {
-        &self.buf[self.stack_bot..]
+        let stack_bytes = self.buf.len() * 4 - self.stack_bot;
+        // Safety: stack_bot is a word-aligned byte offset; remaining bytes are valid.
+        unsafe {
+            core::slice::from_raw_parts(
+                (self.buf.as_ptr() as *const u8).add(self.stack_bot),
+                stack_bytes,
+            )
+        }
     }
 }
 

@@ -129,7 +129,7 @@ pub struct Vm<'buf> {
 }
 
 impl<'buf> Vm<'buf> {
-    pub fn new(buf: &'buf mut [u8]) -> Self {
+    pub fn new(buf: &'buf mut [u32]) -> Self {
         Vm {
             arena: Arena::new(buf),
             globals: [Value::ctor(0, 0); 64],
