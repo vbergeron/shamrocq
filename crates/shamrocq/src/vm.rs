@@ -1,4 +1,5 @@
 use crate::arena::{Arena, ArenaError};
+use crate::bytes;
 use crate::stats::stat;
 #[cfg(feature = "stats")]
 use crate::stats::Stats;
@@ -116,7 +117,7 @@ impl<'a> Program<'a> {
     }
 }
 
-const FRAME_HEADER_BYTES: usize = 12;
+const FRAME_HEADER_WORDS: usize = 3;
 
 pub struct Vm<'buf> {
     pub arena: Arena<'buf>,
@@ -131,7 +132,7 @@ pub struct Vm<'buf> {
 impl<'buf> Vm<'buf> {
     pub fn new(buf: &'buf mut [u8]) -> Self {
         Vm {
-            arena: Arena::new(buf),
+            arena: Arena::from_bytes(buf),
             globals: [Value::integer(0); 64],
             n_globals: 0,
             code: &[],
@@ -141,11 +142,6 @@ impl<'buf> Vm<'buf> {
         }
     }
 
-    /// Register a host function at the given index.
-    ///
-    /// The index must match the one assigned by the compiler for `define-foreign`
-    /// declarations (see `foreign` module in the generated `bindings.rs`). Call this before
-    /// `load_program` so the global slot resolves to the correct callable value.
     pub fn register_foreign(&mut self, idx: u16, f: ForeignFn) {
         self.foreign_fns[idx as usize] = Some(f);
     }
@@ -156,9 +152,9 @@ impl<'buf> Vm<'buf> {
 
     pub fn mem_snapshot(&self) -> MemSnapshot {
         MemSnapshot {
-            heap_bytes: self.arena.heap_used(),
-            stack_bytes: self.arena.stack_used(),
-            free_bytes: self.arena.free(),
+            heap_bytes: self.arena.heap_used() * 4,
+            stack_bytes: self.arena.stack_used() * 4,
+            free_bytes: self.arena.free() * 4,
         }
     }
 
@@ -166,13 +162,12 @@ impl<'buf> Vm<'buf> {
         self.arena.bytes_len(val)
     }
 
-    /// Run a GC cycle, using the globals array as extra roots.
     fn run_gc(&mut self) {
         let n = self.n_globals as usize;
         #[allow(unused_variables)]
         let gc_stats = self.arena.collect_garbage(&mut self.globals[..n]);
         stat!(self, gc_count += 1);
-        stat!(self, gc_bytes_reclaimed += gc_stats.bytes_reclaimed as u32);
+        stat!(self, gc_bytes_reclaimed += (gc_stats.words_reclaimed * 4) as u32);
     }
 
     /// Write a binary dump of the VM state into `dst`.
@@ -180,18 +175,16 @@ impl<'buf> Vm<'buf> {
     /// Format (all little-endian):
     ///   magic       4 bytes   "SMRD"
     ///   version     u16       dump format version
-    ///   buf_len     u32       total arena buffer size
-    ///   heap_top    u32       heap high-water mark
-    ///   stack_bot   u32       stack bottom position
+    ///   buf_len     u32       total arena buffer size (bytes)
+    ///   heap_top    u32       heap high-water mark (bytes)
+    ///   stack_bot   u32       stack bottom position (bytes)
     ///   n_globals   u16       number of active globals
     ///   globals     n_globals * u32   raw Value words
     ///   heap        heap_top bytes
     ///   stack       (buf_len - stack_bot) bytes
-    ///
-    /// Returns the number of bytes written, or `None` if `dst` is too small.
     pub fn dump_into(&self, dst: &mut [u8]) -> Option<usize> {
-        let heap = self.arena.heap_data();
-        let stack = self.arena.stack_data();
+        let heap = bytes::words_as_bytes(self.arena.heap_data());
+        let stack = bytes::words_as_bytes(self.arena.stack_data());
         let header = 4 + 2 + 4 + 4 + 4 + 2 + (self.n_globals as usize) * 4;
         let total = header + heap.len() + stack.len();
         if dst.len() < total {
@@ -203,11 +196,11 @@ impl<'buf> Vm<'buf> {
         pos += 4;
         dst[pos..pos + 2].copy_from_slice(&DUMP_VERSION.to_le_bytes());
         pos += 2;
-        dst[pos..pos + 4].copy_from_slice(&(self.arena.buf_len() as u32).to_le_bytes());
+        dst[pos..pos + 4].copy_from_slice(&(self.arena.buf_len() as u32 * 4).to_le_bytes());
         pos += 4;
-        dst[pos..pos + 4].copy_from_slice(&(self.arena.heap_used() as u32).to_le_bytes());
+        dst[pos..pos + 4].copy_from_slice(&(self.arena.heap_used() as u32 * 4).to_le_bytes());
         pos += 4;
-        dst[pos..pos + 4].copy_from_slice(&(self.arena.stack_bot_pos() as u32).to_le_bytes());
+        dst[pos..pos + 4].copy_from_slice(&(self.arena.stack_bot_pos() as u32 * 4).to_le_bytes());
         pos += 4;
         dst[pos..pos + 2].copy_from_slice(&self.n_globals.to_le_bytes());
         pos += 2;
@@ -298,18 +291,18 @@ impl<'buf> Vm<'buf> {
     }
 
     fn record_heap(&mut self) {
-        stat!(self, peak_heap_bytes = max self.arena.heap_used());
+        stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
     }
 
     fn record_stack(&mut self) {
-        stat!(self, peak_stack_bytes = max self.arena.stack_used());
+        stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
     }
 
     fn try_reclaim(&mut self, result: Value, saved_heap_top: usize) {
         let current = self.arena.heap_used();
         if current > saved_heap_top && !Self::references_heap_since(result, saved_heap_top) {
             stat!(self, reclaim_count += 1);
-            stat!(self, reclaim_bytes_total += (current - saved_heap_top) as u32);
+            stat!(self, reclaim_bytes_total += ((current - saved_heap_top) * 4) as u32);
             self.arena.set_heap_top(saved_heap_top);
         }
     }
@@ -336,7 +329,7 @@ impl<'buf> Vm<'buf> {
         let mut call_depth: usize = 0;
         let mut frame_base = frame_base;
 
-        const GC_THRESHOLD: usize = 256;
+        const GC_THRESHOLD: usize = 64;
 
         loop {
             if pc >= code.len() {
@@ -386,7 +379,7 @@ impl<'buf> Vm<'buf> {
                 op::LOAD => {
                     let idx = code[pc] as usize;
                     pc += 1;
-                    let val = self.arena.stack_read_at(frame_base - (idx + 1) * 4);
+                    let val = self.arena.stack_read_at(frame_base - (idx + 1));
                     self.arena.stack_push(val)?;
                     self.record_stack();
                 }
@@ -395,8 +388,8 @@ impl<'buf> Vm<'buf> {
                     let idx_a = code[pc] as usize;
                     let idx_b = code[pc + 1] as usize;
                     pc += 2;
-                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1) * 4);
-                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1) * 4);
+                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1));
+                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1));
                     self.arena.stack_push(a)?;
                     self.arena.stack_push(b)?;
                     self.record_stack();
@@ -407,9 +400,9 @@ impl<'buf> Vm<'buf> {
                     let idx_b = code[pc + 1] as usize;
                     let idx_c = code[pc + 2] as usize;
                     pc += 3;
-                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1) * 4);
-                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1) * 4);
-                    let c = self.arena.stack_read_at(frame_base - (idx_c + 1) * 4);
+                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1));
+                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1));
+                    let c = self.arena.stack_read_at(frame_base - (idx_c + 1));
                     self.arena.stack_push(a)?;
                     self.arena.stack_push(b)?;
                     self.arena.stack_push(c)?;
@@ -519,10 +512,10 @@ impl<'buf> Vm<'buf> {
                             return Ok(result);
                         }
                         let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                        let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                        let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
+                        let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                        let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
                         self.try_reclaim(result, saved_heap);
-                        self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                        self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                         self.arena.stack_push(result)?;
                         call_depth -= 1;
                         pc = saved_pc;
@@ -544,10 +537,10 @@ impl<'buf> Vm<'buf> {
                                 return Ok(cl);
                             }
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                            let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
+                            let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                            let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
                             self.try_reclaim(cl, saved_heap);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                             self.arena.stack_push(cl)?;
                             call_depth -= 1;
                             pc = saved_pc;
@@ -565,10 +558,10 @@ impl<'buf> Vm<'buf> {
                                 return Ok(cl);
                             }
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                            let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
+                            let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                            let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
                             self.try_reclaim(cl, saved_heap);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                             self.arena.stack_push(cl)?;
                             call_depth -= 1;
                             pc = saved_pc;
@@ -642,10 +635,10 @@ impl<'buf> Vm<'buf> {
                         return Ok(result);
                     }
                     let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                    let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                    let saved_heap = self.arena.stack_read_at(frame_base + 8).raw() as usize;
+                    let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                    let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
                     self.try_reclaim(result, saved_heap);
-                    self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                    self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                     self.arena.stack_push(result)?;
                     call_depth -= 1;
                     pc = saved_pc;
@@ -699,7 +692,7 @@ impl<'buf> Vm<'buf> {
                     let n = code[pc] as usize;
                     pc += 1;
                     let bot = self.arena.stack_bot_pos();
-                    self.arena.set_stack_bot_pos(bot + n * 4);
+                    self.arena.set_stack_bot_pos(bot + n);
                 }
 
                 op::SLIDE => {
@@ -707,7 +700,7 @@ impl<'buf> Vm<'buf> {
                     pc += 1;
                     let result = self.arena.stack_pop();
                     let bot = self.arena.stack_bot_pos();
-                    self.arena.set_stack_bot_pos(bot + n * 4);
+                    self.arena.set_stack_bot_pos(bot + n);
                     self.arena.stack_push(result)?;
                 }
 
