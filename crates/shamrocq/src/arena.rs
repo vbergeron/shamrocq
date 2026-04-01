@@ -1,5 +1,25 @@
 use crate::value::Value;
 
+mod bytes {
+    /// Cast `&mut [u8]` to `&mut [u32]`, truncating to the nearest whole word.
+    ///
+    /// # Safety
+    /// `slice` must be 4-byte aligned.
+    pub(super) unsafe fn as_words_mut(slice: &mut [u8]) -> &mut [u32] {
+        core::slice::from_raw_parts_mut(slice.as_mut_ptr() as *mut u32, slice.len() / 4)
+    }
+
+    pub(super) fn as_bytes(words: &[u32]) -> &[u8] {
+        // Safety: u8 has alignment 1; byte length is words.len() * 4.
+        unsafe { core::slice::from_raw_parts(words.as_ptr() as *const u8, words.len() * 4) }
+    }
+
+    pub(super) fn as_bytes_mut(words: &mut [u32]) -> &mut [u8] {
+        // Safety: u8 has alignment 1; byte length is words.len() * 4.
+        unsafe { core::slice::from_raw_parts_mut(words.as_mut_ptr() as *mut u8, words.len() * 4) }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum ArenaError {
     OutOfMemory,
@@ -13,12 +33,10 @@ pub struct Arena<'a> {
 
 impl<'a> Arena<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
-        let words = buf.len() / 4;
-        let ptr = buf.as_mut_ptr() as *mut u32;
-        // Safety: ptr comes from a unique mutable reference; words * 4 ≤ buf.len().
-        // The caller must supply a 4-byte-aligned buffer (guaranteed for heap
-        // allocations and for static buffers declared with #[repr(align(4))]).
-        let buf32 = unsafe { core::slice::from_raw_parts_mut(ptr, words) };
+        // Safety: heap allocations and static buffers declared with
+        // #[repr(align(4))] are 4-byte aligned.
+        let buf32 = unsafe { bytes::as_words_mut(buf) };
+        let words = buf32.len();
         Arena {
             buf: buf32,
             heap_top: 0,
@@ -199,45 +217,32 @@ impl<'a> Arena<'a> {
         let len = data.len();
         let words = (len + 3) / 4;
         let byte_offset = self.alloc(words)?;
-        // Safety: byte_offset is word-aligned and within the buffer; we write
-        // exactly `len` bytes which fits within the `words` allocated words.
-        unsafe {
-            let dst = core::slice::from_raw_parts_mut(
-                self.buf[byte_offset >> 2..].as_mut_ptr() as *mut u8,
-                len,
-            );
-            dst.copy_from_slice(data);
-        }
+        let word_off = byte_offset >> 2;
+        bytes::as_bytes_mut(&mut self.buf[word_off..word_off + words])[..len]
+            .copy_from_slice(data);
         Ok(Value::bytes(len as u8, byte_offset))
     }
 
     pub fn bytes_data(&self, val: Value) -> &[u8] {
         let word_off = val.bytes_offset() >> 2;
         let len = val.bytes_len();
-        // Safety: word_off and len are within the allocated heap region.
-        unsafe {
-            core::slice::from_raw_parts(self.buf[word_off..].as_ptr() as *const u8, len)
-        }
+        &bytes::as_bytes(&self.buf[word_off..])[..len]
     }
 
     pub fn bytes_concat(&mut self, a: Value, b: Value) -> Result<Value, ArenaError> {
-        let a_off = a.bytes_offset();
         let a_len = a.bytes_len();
-        let b_off = b.bytes_offset();
         let b_len = b.bytes_len();
         let total = a_len + b_len;
         let words = (total + 3) / 4;
         let byte_offset = self.alloc(words)?;
-        // Safety: all offsets are word-aligned and within the buffer. The new
-        // allocation is always above the sources (bump allocator), so there is
-        // no overlap.
-        unsafe {
-            let dst = self.buf[byte_offset >> 2..].as_mut_ptr() as *mut u8;
-            let src_a = self.buf[a_off >> 2..].as_ptr() as *const u8;
-            let src_b = self.buf[b_off >> 2..].as_ptr() as *const u8;
-            core::ptr::copy_nonoverlapping(src_a, dst, a_len);
-            core::ptr::copy_nonoverlapping(src_b, dst.add(a_len), b_len);
-        }
+        // The bump allocator guarantees the destination is above both sources,
+        // so split_at_mut cleanly separates them.
+        let dst_word_off = byte_offset >> 2;
+        let (sources, dest_words) = self.buf.split_at_mut(dst_word_off);
+        let src = bytes::as_bytes(sources);
+        let dst = bytes::as_bytes_mut(dest_words);
+        dst[..a_len].copy_from_slice(&src[a.bytes_offset()..][..a_len]);
+        dst[a_len..total].copy_from_slice(&src[b.bytes_offset()..][..b_len]);
         Ok(Value::bytes(total as u8, byte_offset))
     }
 
@@ -319,19 +324,11 @@ impl<'a> Arena<'a> {
     }
 
     pub fn heap_data(&self) -> &[u8] {
-        // Safety: heap_top is a byte count; the buf pointer is valid for that many bytes.
-        unsafe { core::slice::from_raw_parts(self.buf.as_ptr() as *const u8, self.heap_top) }
+        &bytes::as_bytes(&self.buf[..self.heap_top >> 2])
     }
 
     pub fn stack_data(&self) -> &[u8] {
-        let stack_bytes = self.buf.len() * 4 - self.stack_bot;
-        // Safety: stack_bot is a word-aligned byte offset; remaining bytes are valid.
-        unsafe {
-            core::slice::from_raw_parts(
-                (self.buf.as_ptr() as *const u8).add(self.stack_bot),
-                stack_bytes,
-            )
-        }
+        bytes::as_bytes(&self.buf[self.stack_bot >> 2..])
     }
 }
 
