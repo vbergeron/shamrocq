@@ -38,8 +38,8 @@ pub struct Value(u32);
 impl Value {
     // -- Ctor: 000 | tag:8 | offset:21 --
 
-    pub const fn ctor(tag: u8, byte_offset: usize) -> Self {
-        Value(KIND_CTOR | ((tag as u32) << TAG_SHIFT) | ((byte_offset >> 2) as u32))
+    pub const fn ctor(tag: u8, offset: usize) -> Self {
+        Value(KIND_CTOR | ((tag as u32) << TAG_SHIFT) | (offset as u32))
     }
 
     pub const fn is_ctor(self) -> bool {
@@ -51,7 +51,7 @@ impl Value {
     }
 
     pub const fn offset(self) -> usize {
-        ((self.0 & PAYLOAD_21) as usize) << 2
+        (self.0 & PAYLOAD_21) as usize
     }
 
     // -- Integer: 001 | value:29 --
@@ -70,8 +70,8 @@ impl Value {
 
     // -- Bytes: 010 | len:8 | offset:21 --
 
-    pub const fn bytes(len: u8, byte_offset: usize) -> Self {
-        Value(KIND_BYTES | ((len as u32) << TAG_SHIFT) | ((byte_offset >> 2) as u32))
+    pub const fn bytes(len: u8, offset: usize) -> Self {
+        Value(KIND_BYTES | ((len as u32) << TAG_SHIFT) | (offset as u32))
     }
 
     pub const fn is_bytes(self) -> bool {
@@ -83,13 +83,13 @@ impl Value {
     }
 
     pub const fn bytes_offset(self) -> usize {
-        ((self.0 & PAYLOAD_21) as usize) << 2
+        (self.0 & PAYLOAD_21) as usize
     }
 
     // -- Application: 101 | offset:21 --
 
-    pub const fn application(byte_offset: usize) -> Self {
-        Value(KIND_APPLICATION | ((byte_offset >> 2) as u32))
+    pub const fn application(offset: usize) -> Self {
+        Value(KIND_APPLICATION | (offset as u32))
     }
 
     pub const fn is_application(self) -> bool {
@@ -97,13 +97,13 @@ impl Value {
     }
 
     pub const fn application_offset(self) -> usize {
-        ((self.0 & PAYLOAD_21) as usize) << 2
+        (self.0 & PAYLOAD_21) as usize
     }
 
     // -- Closure: 110 | offset:21 --
 
-    pub const fn closure(byte_offset: usize) -> Self {
-        Value(KIND_CLOSURE | ((byte_offset >> 2) as u32))
+    pub const fn closure(offset: usize) -> Self {
+        Value(KIND_CLOSURE | (offset as u32))
     }
 
     pub const fn is_closure(self) -> bool {
@@ -111,7 +111,7 @@ impl Value {
     }
 
     pub const fn closure_offset(self) -> usize {
-        ((self.0 & PAYLOAD_21) as usize) << 2
+        (self.0 & PAYLOAD_21) as usize
     }
 
     // -- Function: 111 | foreign:1 | arity:4 | addr:16 --

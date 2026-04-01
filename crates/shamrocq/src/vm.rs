@@ -116,7 +116,7 @@ impl<'a> Program<'a> {
     }
 }
 
-const FRAME_HEADER_BYTES: usize = 12;
+const FRAME_HEADER_WORDS: usize = 3;
 
 pub struct Vm<'buf> {
     pub arena: Arena<'buf>,
@@ -194,7 +194,7 @@ impl<'buf> Vm<'buf> {
         pos += 4;
         dst[pos..pos + 4].copy_from_slice(&(self.arena.heap_used() as u32).to_le_bytes());
         pos += 4;
-        dst[pos..pos + 4].copy_from_slice(&(self.arena.stack_bot_pos() as u32).to_le_bytes());
+        dst[pos..pos + 4].copy_from_slice(&((self.arena.stack_bot_pos() * 4) as u32).to_le_bytes());
         pos += 4;
         dst[pos..pos + 2].copy_from_slice(&self.n_globals.to_le_bytes());
         pos += 2;
@@ -358,7 +358,7 @@ impl<'buf> Vm<'buf> {
                 op::LOAD => {
                     let idx = code[pc] as usize;
                     pc += 1;
-                    let val = self.arena.stack_read_at(frame_base - (idx + 1) * 4);
+                    let val = self.arena.stack_read_at(frame_base - (idx + 1));
                     self.arena.stack_push(val)?;
                     self.record_stack();
                 }
@@ -367,8 +367,8 @@ impl<'buf> Vm<'buf> {
                     let idx_a = code[pc] as usize;
                     let idx_b = code[pc + 1] as usize;
                     pc += 2;
-                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1) * 4);
-                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1) * 4);
+                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1));
+                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1));
                     self.arena.stack_push(a)?;
                     self.arena.stack_push(b)?;
                     self.record_stack();
@@ -379,9 +379,9 @@ impl<'buf> Vm<'buf> {
                     let idx_b = code[pc + 1] as usize;
                     let idx_c = code[pc + 2] as usize;
                     pc += 3;
-                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1) * 4);
-                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1) * 4);
-                    let c = self.arena.stack_read_at(frame_base - (idx_c + 1) * 4);
+                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1));
+                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1));
+                    let c = self.arena.stack_read_at(frame_base - (idx_c + 1));
                     self.arena.stack_push(a)?;
                     self.arena.stack_push(b)?;
                     self.arena.stack_push(c)?;
@@ -519,9 +519,9 @@ impl<'buf> Vm<'buf> {
                                 return Ok(pap);
                             }
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                            let saved_env = self.arena.stack_read_at(frame_base + 8);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                            let saved_env = self.arena.stack_read_at(frame_base + 2);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                             self.arena.stack_push(pap)?;
                             call_depth -= 1;
                             pc = saved_pc;
@@ -557,9 +557,9 @@ impl<'buf> Vm<'buf> {
                             return Ok(result);
                         }
                         let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                        let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                        let saved_env = self.arena.stack_read_at(frame_base + 8);
-                        self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                        let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                        let saved_env = self.arena.stack_read_at(frame_base + 2);
+                        self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                         self.arena.stack_push(result)?;
                         call_depth -= 1;
                         pc = saved_pc;
@@ -594,9 +594,9 @@ impl<'buf> Vm<'buf> {
                                 return Ok(pap);
                             }
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                            let saved_env = self.arena.stack_read_at(frame_base + 8);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                            let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                            let saved_env = self.arena.stack_read_at(frame_base + 2);
+                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                             self.arena.stack_push(pap)?;
                             call_depth -= 1;
                             pc = saved_pc;
@@ -662,9 +662,9 @@ impl<'buf> Vm<'buf> {
                         return Ok(result);
                     }
                     let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                    let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
-                    let saved_env = self.arena.stack_read_at(frame_base + 8);
-                    self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
+                    let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
+                    let saved_env = self.arena.stack_read_at(frame_base + 2);
+                    self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
                     self.arena.stack_push(result)?;
                     call_depth -= 1;
                     pc = saved_pc;
@@ -719,7 +719,7 @@ impl<'buf> Vm<'buf> {
                     let n = code[pc] as usize;
                     pc += 1;
                     let bot = self.arena.stack_bot_pos();
-                    self.arena.set_stack_bot_pos(bot + n * 4);
+                    self.arena.set_stack_bot_pos(bot + n);
                 }
 
                 op::SLIDE => {
@@ -727,7 +727,7 @@ impl<'buf> Vm<'buf> {
                     pc += 1;
                     let result = self.arena.stack_pop();
                     let bot = self.arena.stack_bot_pos();
-                    self.arena.set_stack_bot_pos(bot + n * 4);
+                    self.arena.set_stack_bot_pos(bot + n);
                     self.arena.stack_push(result)?;
                 }
 
