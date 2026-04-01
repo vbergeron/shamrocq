@@ -116,7 +116,7 @@ impl<'a> Program<'a> {
     }
 }
 
-const FRAME_HEADER_BYTES: usize = 12;
+const FRAME_HEADER_BYTES: usize = 16;
 
 pub struct Vm<'buf> {
     pub arena: Arena<'buf>,
@@ -300,6 +300,33 @@ impl<'buf> Vm<'buf> {
         stat!(self, peak_stack_bytes = max self.arena.stack_used());
     }
 
+    fn try_reclaim(&mut self, result: Value, saved_heap_top: usize) {
+        let current = self.arena.heap_used();
+        if current > saved_heap_top && !Self::references_heap_since(result, saved_heap_top) {
+            stat!(self, reclaim_count += 1);
+            stat!(self, reclaim_bytes_total += (current - saved_heap_top) as u32);
+            self.arena.set_heap_top(saved_heap_top);
+        }
+    }
+
+    fn references_heap_since(val: Value, start: usize) -> bool {
+        if val.is_integer() || val.is_function() {
+            return false;
+        }
+        let offset = if val.is_ctor() {
+            val.offset()
+        } else if val.is_closure() {
+            val.closure_offset()
+        } else if val.is_application() {
+            val.application_offset()
+        } else if val.is_bytes() {
+            val.bytes_offset()
+        } else {
+            return true;
+        };
+        offset >= start
+    }
+
     fn eval(&mut self, start_pc: usize) -> Result<Value, VmError> {
         let fb = self.arena.stack_bot_pos();
         self.eval_with_frame(start_pc, fb, Value::ctor(0, 0))
@@ -337,7 +364,7 @@ impl<'buf> Vm<'buf> {
                     } else {
                         let val = self.arena.alloc_ctor_from_stack(tag, arity)?;
                         stat!(self, alloc_count_ctor += 1);
-                        stat!(self, alloc_bytes_total += (arity * 4) as u32);
+                        stat!(self, alloc_bytes_total += ((1 + arity) * 4) as u32);
                         self.record_heap();
                         self.arena.stack_push(val)?;
                     }
@@ -437,6 +464,7 @@ impl<'buf> Vm<'buf> {
                             self.arena.stack_push(pap)?;
                             self.record_stack();
                         } else {
+                            self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
                             self.arena.stack_push(env)?;
                             self.arena.stack_push(Value::from_raw(pc as u32))?;
                             self.arena.stack_push(Value::from_raw(frame_base as u32))?;
@@ -473,6 +501,7 @@ impl<'buf> Vm<'buf> {
                             self.arena.closure_arity(func)
                         };
                         if arity == 1 {
+                            self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
                             self.arena.stack_push(env)?;
                             self.arena.stack_push(Value::from_raw(pc as u32))?;
                             self.arena.stack_push(Value::from_raw(frame_base as u32))?;
@@ -521,6 +550,8 @@ impl<'buf> Vm<'buf> {
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                             let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
                             let saved_env = self.arena.stack_read_at(frame_base + 8);
+                            let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
+                            self.try_reclaim(pap, saved_heap);
                             self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
                             self.arena.stack_push(pap)?;
                             call_depth -= 1;
@@ -559,6 +590,8 @@ impl<'buf> Vm<'buf> {
                         let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                         let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
                         let saved_env = self.arena.stack_read_at(frame_base + 8);
+                        let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
+                        self.try_reclaim(result, saved_heap);
                         self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
                         self.arena.stack_push(result)?;
                         call_depth -= 1;
@@ -596,6 +629,8 @@ impl<'buf> Vm<'buf> {
                             let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                             let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
                             let saved_env = self.arena.stack_read_at(frame_base + 8);
+                            let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
+                            self.try_reclaim(pap, saved_heap);
                             self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
                             self.arena.stack_push(pap)?;
                             call_depth -= 1;
@@ -616,6 +651,7 @@ impl<'buf> Vm<'buf> {
                         tmp[i] = self.arena.stack_pop();
                     }
 
+                    self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
                     self.arena.stack_push(env)?;
                     self.arena.stack_push(Value::from_raw(pc as u32))?;
                     self.arena.stack_push(Value::from_raw(frame_base as u32))?;
@@ -664,6 +700,8 @@ impl<'buf> Vm<'buf> {
                     let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
                     let saved_pc = self.arena.stack_read_at(frame_base + 4).raw() as usize;
                     let saved_env = self.arena.stack_read_at(frame_base + 8);
+                    let saved_heap = self.arena.stack_read_at(frame_base + 12).raw() as usize;
+                    self.try_reclaim(result, saved_heap);
                     self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_BYTES);
                     self.arena.stack_push(result)?;
                     call_depth -= 1;

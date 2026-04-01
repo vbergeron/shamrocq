@@ -15,6 +15,9 @@ pub struct Stats {
     pub exec_tail_call_count: u32,
     pub exec_match_count: u32,
     pub exec_peak_call_depth: u32,
+
+    pub reclaim_count: u32,
+    pub reclaim_bytes_total: u32,
 }
 
 #[cfg(feature = "stats")]
@@ -32,7 +35,10 @@ impl fmt::Display for Stats {
         writeln!(f, "    calls          {:>6}", self.exec_call_count)?;
         writeln!(f, "    tail calls     {:>6}", self.exec_tail_call_count)?;
         writeln!(f, "    matches        {:>6}", self.exec_match_count)?;
-        write!(f,   "    peak depth     {:>6}", self.exec_peak_call_depth)
+        writeln!(f, "    peak depth     {:>6}", self.exec_peak_call_depth)?;
+        writeln!(f, "  reclaim")?;
+        writeln!(f, "    count          {:>6}", self.reclaim_count)?;
+        write!(f,   "    bytes total    {:>6} B", self.reclaim_bytes_total)
     }
 }
 

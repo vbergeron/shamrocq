@@ -43,25 +43,33 @@ impl<'a> Arena<'a> {
     // -- Ctor --
 
     pub fn alloc_ctor(&mut self, tag: u8, fields: &[Value]) -> Result<Value, ArenaError> {
-        let offset = self.alloc(fields.len())?;
+        let n = fields.len();
+        let offset = self.alloc(1 + n)?;
+        self.write_word(offset, n as u32);
         for (i, &f) in fields.iter().enumerate() {
-            self.write_word(offset + i * 4, f.raw());
+            self.write_word(offset + (1 + i) * 4, f.raw());
         }
         Ok(Value::ctor(tag, offset))
     }
 
     pub fn alloc_ctor_from_stack(&mut self, tag: u8, arity: usize) -> Result<Value, ArenaError> {
-        let offset = self.alloc(arity)?;
+        let offset = self.alloc(1 + arity)?;
+        self.write_word(offset, arity as u32);
         for i in (0..arity).rev() {
             let field = self.stack_pop();
-            self.write_word(offset + i * 4, field.raw());
+            self.write_word(offset + (1 + i) * 4, field.raw());
         }
         Ok(Value::ctor(tag, offset))
     }
 
     pub fn ctor_field(&self, val: Value, idx: usize) -> Value {
         let base = val.offset();
-        Value::from_raw(self.read_word(base + idx * 4))
+        Value::from_raw(self.read_word(base + (1 + idx) * 4))
+    }
+
+    pub fn ctor_arity(&self, val: Value) -> usize {
+        let header = self.read_word(val.offset());
+        (header & 0xFF) as usize
     }
 
     // -- Closure: header = [code_addr:16 | arity:8 | n_cap:8] --
@@ -283,6 +291,10 @@ impl<'a> Arena<'a> {
 
     pub fn heap_used(&self) -> usize {
         self.heap_top
+    }
+
+    pub fn set_heap_top(&mut self, pos: usize) {
+        self.heap_top = pos;
     }
 
     pub fn stack_used(&self) -> usize {

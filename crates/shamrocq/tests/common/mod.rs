@@ -100,6 +100,7 @@ pub fn print_stats(name: &str, vm: &Vm) {
                 "\"exec_instruction_count\":{ei},\"exec_call_count\":{ea},",
                 "\"exec_tail_call_count\":{et},",
                 "\"exec_match_count\":{em},\"exec_peak_call_depth\":{ed},",
+                "\"reclaim_count\":{rc},\"reclaim_bytes_total\":{rb},",
                 "\"final_heap_bytes\":{fh},\"final_stack_bytes\":{fs},\"final_free_bytes\":{ff}}}"
             ),
             ts = timestamp, co = commit, nm = name,
@@ -108,6 +109,7 @@ pub fn print_stats(name: &str, vm: &Vm) {
             ei = s.exec_instruction_count, ea = s.exec_call_count,
             et = s.exec_tail_call_count,
             em = s.exec_match_count, ed = s.exec_peak_call_depth,
+            rc = s.reclaim_count, rb = s.reclaim_bytes_total,
             fh = snap.heap_bytes, fs = snap.stack_bytes, ff = snap.free_bytes,
         );
         if let Ok(mut file) = std::fs::OpenOptions::new().append(true).create(true).open(&path) {
