@@ -11,6 +11,11 @@ pub struct ClosureRef {
     pub n_captures: u8,
 }
 
+pub struct DirectCallRef {
+    pub target: u16,
+    pub n_args: u8,
+}
+
 pub struct FrameInfo {
     pub n_captures: usize,
     pub n_params: usize,
@@ -18,10 +23,12 @@ pub struct FrameInfo {
 
 pub struct ScanResult {
     pub closures: Vec<ClosureRef>,
+    pub direct_calls: Vec<DirectCallRef>,
 }
 
 pub fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
     let mut closures = Vec::new();
+    let mut direct_calls = Vec::new();
 
     let mut pc = 0usize;
     while pc < code.len() {
@@ -55,10 +62,20 @@ pub fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
                 closures.push(ClosureRef { pc: instr_pc, target, arity, n_captures });
             }
             op::FIXPOINT => { pc += 1; }
-            op::CALL1 => {}
-            op::TAIL_CALL1 => {}
-            op::CALL_N => { pc += 3; }
-            op::TAIL_CALL_N => { pc += 3; }
+            op::CALL_DYNAMIC => {}
+            op::TAIL_CALL_DYNAMIC => {}
+            op::CALL => {
+                let target = u16::from_le_bytes([code[pc], code[pc + 1]]);
+                let n_args = code[pc + 2];
+                pc += 3;
+                direct_calls.push(DirectCallRef { target, n_args });
+            }
+            op::TAIL_CALL => {
+                let target = u16::from_le_bytes([code[pc], code[pc + 1]]);
+                let n_args = code[pc + 2];
+                pc += 3;
+                direct_calls.push(DirectCallRef { target, n_args });
+            }
             op::RET => {}
             op::MATCH2 => {
                 pc += 1;
@@ -89,7 +106,7 @@ pub fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
         }
     }
 
-    Ok(ScanResult { closures })
+    Ok(ScanResult { closures, direct_calls })
 }
 
 pub fn build_labels(
@@ -130,6 +147,42 @@ pub fn build_labels(
             );
             labels.insert(cl.target, child_label);
         }
+    }
+
+    // Identify globals whose stub is a FUNCTION instruction with arity >= 2.
+    // The compiler emits flat (direct multi-arg) entry points for these, in
+    // global-table order. We match them positionally against unlabeled
+    // CALL/TAIL_CALL targets sorted by address.
+    let mut flat_globals: Vec<(&str, u8)> = Vec::new();
+    for g in globals {
+        // The stub at g.offset should be a FUNCTION instruction for lambda globals.
+        if let Some(cl) = scan.closures.iter().find(|c| c.pc as u16 == g.offset && c.n_captures == 0) {
+            if cl.arity >= 2 {
+                flat_globals.push((&g.name, cl.arity));
+            }
+        }
+    }
+
+    let mut unlabeled_targets: Vec<u16> = scan.direct_calls.iter()
+        .map(|dc| dc.target)
+        .filter(|t| !labels.contains_key(t))
+        .collect();
+    unlabeled_targets.sort();
+    unlabeled_targets.dedup();
+
+    for (i, &target) in unlabeled_targets.iter().enumerate() {
+        let (name, n_params) = if i < flat_globals.len() {
+            let (gname, arity) = flat_globals[i];
+            (format!("{}$direct", gname), arity as usize)
+        } else {
+            let n_args = scan.direct_calls.iter()
+                .find(|dc| dc.target == target)
+                .map(|dc| dc.n_args as usize)
+                .unwrap_or(0);
+            (format!("direct@{:04X}", target), n_args)
+        };
+        frames.insert(target, FrameInfo { n_captures: 0, n_params });
+        labels.insert(target, name);
     }
 
     (labels, frames)

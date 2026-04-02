@@ -7,6 +7,7 @@ use crate::scan::{build_labels, scan_code, FrameInfo};
 use crate::util::{read_u8, read_u16le, read_i32le, escape_bytes};
 
 pub struct Disassembly {
+    pub filename: String,
     pub version: u16,
     pub blob_len: usize,
     pub header_len: usize,
@@ -23,7 +24,7 @@ pub enum Item {
     MatchEntry { tag: u8, tag_name: Option<String>, arity: u8, target: u16 },
 }
 
-pub fn disassemble(blob: &[u8]) -> Result<Disassembly, String> {
+pub fn disassemble(blob: &[u8], filename: &str) -> Result<Disassembly, String> {
     let (version, globals, tags, header_len) = parse_header(blob)?;
     let code = &blob[header_len..];
 
@@ -198,21 +199,21 @@ pub fn disassemble(blob: &[u8]) -> Result<Disassembly, String> {
                     emit!("FIXPOINT", format!("cap_idx={}", cap_idx));
                 }
             }
-            op::CALL1 => emit!("CALL1"),
-            op::TAIL_CALL1 => emit!("TAIL_CALL1"),
-            op::CALL_N => {
+            op::CALL_DYNAMIC => emit!("CALL_DYNAMIC"),
+            op::TAIL_CALL_DYNAMIC => emit!("TAIL_CALL_DYNAMIC"),
+            op::CALL => {
                 let addr = read_u16le(code, pc)?;
                 let n_args = read_u8(code, pc + 2)?;
                 pc += 3;
                 let lbl = label_at(addr, &labels);
-                emit!("CALL_N", format!("code+0x{:04X}{} n_args={}", addr, lbl, n_args));
+                emit!("CALL", format!("code+0x{:04X}{} n_args={}", addr, lbl, n_args));
             }
-            op::TAIL_CALL_N => {
+            op::TAIL_CALL => {
                 let addr = read_u16le(code, pc)?;
                 let n_args = read_u8(code, pc + 2)?;
                 pc += 3;
                 let lbl = label_at(addr, &labels);
-                emit!("TAIL_CALL_N", format!("code+0x{:04X}{} n_args={}", addr, lbl, n_args));
+                emit!("TAIL_CALL", format!("code+0x{:04X}{} n_args={}", addr, lbl, n_args));
             }
             op::RET => emit!("RET"),
             op::MATCH2 => {
@@ -293,6 +294,7 @@ pub fn disassemble(blob: &[u8]) -> Result<Disassembly, String> {
     }
 
     Ok(Disassembly {
+        filename: filename.to_string(),
         version,
         blob_len: blob.len(),
         header_len,

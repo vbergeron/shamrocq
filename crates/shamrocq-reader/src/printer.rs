@@ -2,13 +2,12 @@ use crate::color::C;
 use crate::disasm::{Disassembly, Item};
 
 pub fn print_disassembly(d: &Disassembly, c: &C) {
-    println!("{}=== shamrocq bytecode ==={}", c.bld, c.rst);
+    println!("{}=== {} | Bytecode version {} ==={}", c.bld, d.filename, d.version, c.rst);
     println!(
-        "blob: {} bytes  header: {} bytes  code: {} bytes  version: {}  tags: {}",
+        "blob: {} bytes  header: {} bytes  code: {} bytes  tags: {}",
         d.blob_len,
         d.header_len,
         d.code_len,
-        d.version,
         if d.tags.is_empty() { "none".to_string() } else { format!("{} embedded", d.tags.len()) },
     );
     println!();

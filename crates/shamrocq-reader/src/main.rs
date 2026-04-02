@@ -4,6 +4,8 @@ mod dump;
 mod header;
 mod printer;
 mod scan;
+mod style;
+mod tui;
 mod util;
 
 use std::io::IsTerminal;
@@ -23,6 +25,10 @@ struct Cli {
     /// Color output mode
     #[arg(long, value_enum, default_value = "auto")]
     color: ColorMode,
+
+    /// Interactive TUI mode
+    #[arg(short, long)]
+    interactive: bool,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -43,11 +49,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let blob = std::fs::read(&cli.file)
         .map_err(|e| format!("cannot read {}: {}", cli.file.display(), e))?;
 
-    if blob.len() >= 4 && blob[0..4] == shamrocq_bytecode::DUMP_MAGIC {
+    if blob[0..4] == shamrocq_bytecode::DUMP_MAGIC {
         dump::display_dump(&blob, &c).map_err(|e| format!("dump error: {}", e))?;
+    } else if blob[0..4] == shamrocq_bytecode::MAGIC {
+        let fname = cli.file.file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| cli.file.display().to_string());
+        let d = disasm::disassemble(&blob, &fname).map_err(|e| format!("disassembly error: {}", e))?;
+        if cli.interactive {
+            tui::run(d)?;
+        } else {
+            printer::print_disassembly(&d, &c);
+        }
     } else {
-        let d = disasm::disassemble(&blob).map_err(|e| format!("disassembly error: {}", e))?;
-        printer::print_disassembly(&d, &c);
+        return Err(format!("unrecognized magic: {:?}", &blob[0..4]).into());
     }
     Ok(())
 }
