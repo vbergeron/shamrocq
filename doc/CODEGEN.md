@@ -169,7 +169,7 @@ more changes are made (up to `DEFAULT_MAX_PASS_ITERATIONS`).
 | Dead binding elimination | `p04_dead_binding.rs` | Remove unused `let` bindings |
 | Case of known ctor | `p05_case_known_ctor.rs` | `match (Ctor ...) { (Ctor ...) → e }` → `e` |
 | Eta-reduce | `p06_eta_reduce.rs` | `(lambda (x) (f x))` → `f` |
-| Arity analysis | `p07_arity_analysis.rs` | Tag multi-arg lambdas with their arity for `CALL_N` |
+| Arity analysis | `p07_arity_analysis.rs` | Tag multi-arg lambdas with their arity for `CALL` |
 | ANF normalization | `p08_anf.rs` | Lift non-atomic sub-expressions into `let` bindings |
 
 ANF normalization guarantees that every argument in `App` and every field in
@@ -307,22 +307,22 @@ Lambda bodies are not emitted inline.  Instead:
 This means all lambda code appears after the global initializers in the
 bytecode stream.
 
-### Exact-arity calls (CALL_N / TAIL_CALL_N)
+### Exact-arity calls (CALL / TAIL_CALL)
 
 When the compiler encounters `App^N(Global(g), args)` and the arity analysis
 pass has determined that `g` has arity N, it emits an exact-arity call
-instead of N chained `CALL1` instructions:
+instead of N chained `CALL_DYNAMIC` instructions:
 
 1. Compile all N arguments onto the stack.
-2. Emit `CALL_N flat_entry N` (or `TAIL_CALL_N` in tail position).
+2. Emit `CALL flat_entry N` (or `TAIL_CALL` in tail position).
 
 The callee is compiled with a **flat entry point** — `frame_depth = arity`,
 no captures, and de Bruijn indices map directly to `LOAD` slots.  This
 bypasses the curried closure chain entirely: no PAP allocations, no
-intermediate `CALL1` dispatches.
+intermediate `CALL_DYNAMIC` dispatches.
 
-Non-matching call sites (partial application, unknown callees, arity-1
-functions) continue to use curried `CALL1`.
+Non-matching call sites (partial application, unknown callees) continue to
+use `CALL_DYNAMIC`.
 
 ### Output
 

@@ -9,14 +9,14 @@ O(1) dispatch instead of O(n) linear scan.  Entry format is 3 bytes
 (arity + offset) instead of 4 (tag + arity + offset).  Gap entries
 point to an ERROR instruction.
 
-### CALL_N / TAIL_CALL_N (bytecode v4)
+### CALL / TAIL_CALL (bytecode v4)
 
 When the compiler sees `App^N(Global(g), args)` where N equals the known
-arity of g, it emits all N arguments followed by `CALL_N flat_entry N`.
+arity of g, it emits all N arguments followed by `CALL flat_entry N`.
 The VM jumps directly to a flat entry point compiled with `frame_depth =
 arity`, bypassing the curried closure chain entirely.  No PAP allocations,
-no intermediate CALL1 dispatches.  Curried CALL1 remains for partial
-application, unknown callees, and arity-1 functions.
+no intermediate CALL_DYNAMIC dispatches.  Curried CALL_DYNAMIC remains for
+partial application and unknown callees.
 
 ### Compiler optimization passes
 
@@ -56,8 +56,8 @@ hforest) but return a value allocated before the call.
 
 ### 1. Residual Curried Overhead
 
-CALL_N handles exact-arity calls to known globals, but several cases still
-go through the curried CALL1 pipeline:
+CALL handles exact-arity calls to known globals, but several cases still
+go through the curried CALL_DYNAMIC pipeline:
 
 - **Partial application** — `(map f)` where `map` has arity 2.
 - **Unknown callees** — higher-order calls like `(f x)` where `f` is a
@@ -103,10 +103,10 @@ in the hot loop.
 
 ### Tier 1: Full Multi-Arg Calling Convention (GRAB)
 
-Phase 1 (CALL_N for exact-arity known calls) is done.  Remaining phases:
+Phase 1 (CALL for exact-arity known calls) is done.  Remaining phases:
 
 **Phase 2 — GRAB for unknown callees.**
-Add `GRAB K` at the entry of all multi-arity functions.  CALL_N then works
+Add `GRAB K` at the entry of all multi-arity functions.  CALL then works
 with closures and higher-order calls, not just known globals.  GRAB handles
 under-application (builds PAP) so the curried CALL1 path is no longer
 needed for that case.

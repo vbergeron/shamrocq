@@ -130,44 +130,44 @@ impl Emitter {
 
     // Control flow
 
-    pub fn emit_call1(&mut self) {
+    pub fn emit_call_dynamic(&mut self) {
         self.flush_pending_loads();
-        self.code.push(op::CALL1);
+        self.code.push(op::CALL_DYNAMIC);
     }
 
-    pub fn emit_tail_call1(&mut self) {
+    pub fn emit_tail_call_dynamic(&mut self) {
         self.flush_pending_loads();
-        self.code.push(op::TAIL_CALL1);
+        self.code.push(op::TAIL_CALL_DYNAMIC);
     }
 
-    pub fn emit_call_n(&mut self, code_addr: u16, n_args: u8) {
+    pub fn emit_call(&mut self, code_addr: u16, n_args: u8) {
         self.flush_pending_loads();
-        self.code.push(op::CALL_N);
+        self.code.push(op::CALL);
         self.code.extend_from_slice(&code_addr.to_le_bytes());
         self.code.push(n_args);
     }
 
-    /// Emits CALL_N with a placeholder code_addr. Returns position of the u16.
-    pub fn emit_call_n_placeholder(&mut self, n_args: u8) -> usize {
+    /// Emits CALL with a placeholder code_addr. Returns position of the u16.
+    pub fn emit_call_placeholder(&mut self, n_args: u8) -> usize {
         self.flush_pending_loads();
-        self.code.push(op::CALL_N);
+        self.code.push(op::CALL);
         let pos = self.code.len();
         self.code.extend_from_slice(&[0u8; 2]);
         self.code.push(n_args);
         pos
     }
 
-    pub fn emit_tail_call_n(&mut self, code_addr: u16, n_args: u8) {
+    pub fn emit_tail_call(&mut self, code_addr: u16, n_args: u8) {
         self.flush_pending_loads();
-        self.code.push(op::TAIL_CALL_N);
+        self.code.push(op::TAIL_CALL);
         self.code.extend_from_slice(&code_addr.to_le_bytes());
         self.code.push(n_args);
     }
 
-    /// Emits TAIL_CALL_N with a placeholder code_addr. Returns position of the u16.
-    pub fn emit_tail_call_n_placeholder(&mut self, n_args: u8) -> usize {
+    /// Emits TAIL_CALL with a placeholder code_addr. Returns position of the u16.
+    pub fn emit_tail_call_placeholder(&mut self, n_args: u8) -> usize {
         self.flush_pending_loads();
-        self.code.push(op::TAIL_CALL_N);
+        self.code.push(op::TAIL_CALL);
         let pos = self.code.len();
         self.code.extend_from_slice(&[0u8; 2]);
         self.code.push(n_args);

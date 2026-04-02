@@ -152,15 +152,15 @@ arguments) occupy the lowest slots, followed by the fresh argument(s).
 
 ### Call mechanics
 
-- `CALL1`: pops `arg` and `func`, pushes a 3-word frame header, sets up a
+- `CALL_DYNAMIC`: pops `arg` and `func`, pushes a 3-word frame header, sets up a
   new frame with the closure's bound values followed by `arg`, jumps to the
   code address.  For undersaturated calls, extends the closure instead.
-- `TAIL_CALL1`: pops `arg` and `func`, truncates the current frame and
+- `TAIL_CALL_DYNAMIC`: pops `arg` and `func`, truncates the current frame and
   reuses it — **no frame growth**, which is how tail recursion stays bounded.
-- `CALL_N`: N arguments are already on the stack and the target code address
+- `CALL`: N arguments are already on the stack and the target code address
   is statically known.  Pushes a frame header, sets up the N arguments as
-  slots, and jumps.  Used for exact-arity calls to known multi-arity globals.
-- `TAIL_CALL_N`: tail-position variant of `CALL_N`.  Reuses the current frame.
+  slots, and jumps.  Used for exact-arity calls to known globals.
+- `TAIL_CALL`: tail-position variant of `CALL`.  Reuses the current frame.
 - `RET`: pops the result, attempts heap reclamation (see below), restores
   `frame_base` and `pc` from the header, and pushes the result in
   the caller's frame.  At depth 0, returns to the Rust caller.
@@ -194,7 +194,7 @@ across frames.
 ### Tail call optimization
 
 When the compiler sees an application in tail position, it emits
-`TAIL_CALL1` (or `TAIL_CALL_N`) instead of `CALL1`.  The VM truncates the
+`TAIL_CALL_DYNAMIC` (or `TAIL_CALL`) instead of `CALL_DYNAMIC`.  The VM truncates the
 current frame (`set_stack_bot_pos(frame_base)`) and
 lays down the new arguments in-place.  Since no frame header is pushed,
 tail-recursive loops use O(1) stack.
@@ -306,8 +306,8 @@ When compiled with `--features stats`, the VM records:
 | `alloc_count_closure` | Total closure allocations |
 | `alloc_bytes_total` | Total bytes allocated on the heap |
 | `exec_instruction_count` | Total instructions executed |
-| `exec_call_count` | Non-tail call count (`CALL1` + `CALL_N`) |
-| `exec_tail_call_count` | Tail call count (`TAIL_CALL1` + `TAIL_CALL_N`) |
+| `exec_call_count` | Non-tail call count (`CALL_DYNAMIC` + `CALL`) |
+| `exec_tail_call_count` | Tail call count (`TAIL_CALL_DYNAMIC` + `TAIL_CALL`) |
 | `exec_match_count` | `MATCH` dispatch count |
 | `exec_peak_call_depth` | Deepest call stack reached |
 | `reclaim_count` | Number of frames where heap was reclaimed on return |

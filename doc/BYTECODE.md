@@ -182,7 +182,7 @@ a GC or indirection cell.
 
 ### Control flow
 
-#### `CALL1` (0x0E)
+#### `CALL_DYNAMIC` (0x0E)
 
 ```
 0E
@@ -195,7 +195,7 @@ For undersaturated calls, extend the closure with the new argument (no
 frame push).  For foreign functions, the host Rust function is called
 directly — no bytecode frame pushed.
 
-#### `TAIL_CALL1` (0x0F)
+#### `TAIL_CALL_DYNAMIC` (0x0F)
 
 ```
 0F
@@ -205,7 +205,7 @@ Pop `arg`, pop `func`. **Truncate** the current frame (reuse the frame header).
 Set up `arg` in the recycled frame, jump. No stack growth — this is how
 tail recursion stays bounded.
 
-#### `CALL_N` (0x10)
+#### `CALL` (0x10)
 
 ```
 10 code_addr:u16le n_args:u8
@@ -216,18 +216,18 @@ The `n_args` arguments are already on the stack. Push a 3-word frame header
 arguments, jump to `code_addr`. No function Value on the stack — the target
 is statically known at compile time.
 
-This is used for exact-arity calls to multi-arity globals. The compiler
+This is used for exact-arity calls to known globals. The compiler
 detects `App^N(Global(g), args)` where N equals the known arity of g and
-emits all N arguments followed by `CALL_N flat_entry N`, bypassing the
+emits all N arguments followed by `CALL flat_entry N`, bypassing the
 curried closure chain entirely.
 
-#### `TAIL_CALL_N` (0x11)
+#### `TAIL_CALL` (0x11)
 
 ```
 11 code_addr:u16le n_args:u8
 ```
 
-Like `CALL_N` but in tail position. Saves the `n_args` arguments, truncates
+Like `CALL` but in tail position. Saves the `n_args` arguments, truncates
 the current frame, re-pushes the arguments, and jumps. No call-stack growth.
 
 #### `RET` (0x12)
@@ -355,10 +355,10 @@ with `BytesOverflow` if the combined length exceeds 255.
 | `FUNCTION` | `0x0B` | `idx:u16le arity:u8` | 4 |
 | `CLOSURE` | `0x0C` | `code_addr:u16le arity:u8 n_captures:u8` | 5 |
 | `FIXPOINT` | `0x0D` | `cap_idx:u8` | 2 |
-| `CALL1` | `0x0E` | — | 1 |
-| `TAIL_CALL1` | `0x0F` | — | 1 |
-| `CALL_N` | `0x10` | `code_addr:u16le n_args:u8` | 4 |
-| `TAIL_CALL_N` | `0x11` | `code_addr:u16le n_args:u8` | 4 |
+| `CALL_DYNAMIC` | `0x0E` | — | 1 |
+| `TAIL_CALL_DYNAMIC` | `0x0F` | — | 1 |
+| `CALL` | `0x10` | `code_addr:u16le n_args:u8` | 4 |
+| `TAIL_CALL` | `0x11` | `code_addr:u16le n_args:u8` | 4 |
 | `RET` | `0x12` | — | 1 |
 | `MATCH` | `0x13` | `base_tag:u8 n:u8 [arity:u8 off:u16le]*n` | 3+3n |
 | `JMP` | `0x14` | `offset:u16le` | 3 |

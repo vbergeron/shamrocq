@@ -8,15 +8,15 @@
 //!   AppN(Global(f), [a, b, c, d])   where arity(f) = 2
 //!     =>  AppN(AppN(Global(f), [a, b]), [c, d])
 //!
-//!   The inner call becomes a CALL_N (direct jump), avoiding
-//!   intermediate closures that CALL1 chains would allocate.
+//!   The inner call becomes a CALL (direct jump), avoiding
+//!   intermediate closures that CALL_DYNAMIC chains would allocate.
 //!
 //! **Under-application** — fewer args than the callee expects:
 //!
 //!   AppN(Global(f), [a])            where arity(f) = 3
 //!     =>  Lambdas(2, AppN(Global(f), [shift(a,2), Local(1), Local(0)]))
 //!
-//!   Eta-expands into a closure whose body uses CALL_N to the global's
+//!   Eta-expands into a closure whose body uses CALL to the global's
 //!   flat entry, eliminating the extend_closure chain at runtime.
 //!
 //! Also flattens nested App chains targeting a known global into AppN
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn single_arg_under_application_unchanged() {
-        // Only fire for >= 2 supplied args (single-arg under-app is just CALL1)
+        // Only fire for >= 2 supplied args (single-arg under-app is just CALL_DYNAMIC)
         let arities = vec![3u8];
         let input = RExpr::App(
             Box::new(RExpr::Global(0)),

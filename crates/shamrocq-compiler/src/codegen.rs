@@ -266,9 +266,9 @@ impl Compiler {
                     self.compile_expr(func, ctx, false);
                     self.compile_expr(arg, ctx, false);
                     if tail {
-                        self.emitter.emit_tail_call1();
+                        self.emitter.emit_tail_call_dynamic();
                     } else {
-                        self.emitter.emit_call1();
+                        self.emitter.emit_call_dynamic();
                     }
                 }
             }
@@ -279,9 +279,9 @@ impl Compiler {
                     for (i, arg) in args.iter().enumerate() {
                         self.compile_expr(arg, ctx, false);
                         if i == args.len() - 1 && tail {
-                            self.emitter.emit_tail_call1();
+                            self.emitter.emit_tail_call_dynamic();
                         } else {
-                            self.emitter.emit_call1();
+                            self.emitter.emit_call_dynamic();
                         }
                     }
                 }
@@ -471,17 +471,17 @@ impl Compiler {
             None => return false,
         };
         let arity = match self.global_arities.get(global_idx as usize) {
-            Some(&a) if a >= 2 && args.len() == a as usize => a,
+            Some(&a) if a >= 1 && args.len() == a as usize => a,
             _ => return false,
         };
         for a in &args {
             self.compile_expr(a, ctx, false);
         }
         if tail {
-            let pos = self.emitter.emit_tail_call_n_placeholder(arity);
+            let pos = self.emitter.emit_tail_call_placeholder(arity);
             self.flat_patches.push((pos, global_idx));
         } else {
-            let pos = self.emitter.emit_call_n_placeholder(arity);
+            let pos = self.emitter.emit_call_placeholder(arity);
             self.flat_patches.push((pos, global_idx));
         }
         true
@@ -491,7 +491,7 @@ impl Compiler {
         let mut flat_addrs: Vec<Option<u16>> = vec![None; defs.len()];
         for (i, def) in defs.iter().enumerate() {
             let arity = self.global_arities[i];
-            if arity < 2 {
+            if arity < 1 {
                 continue;
             }
             let mut inner = &def.body;
@@ -659,8 +659,8 @@ mod tests {
             "(define f (lambdas (a b) (+ a b)))\n\
              (define g (lambda (x) (f x)))",
         );
-        let has_call = prog.code.windows(1).any(|w| w[0] == op::CALL1 || w[0] == op::TAIL_CALL1);
-        assert!(has_call, "partial application should use CALL1");
+        let has_call = prog.code.windows(1).any(|w| w[0] == op::CALL_DYNAMIC || w[0] == op::TAIL_CALL_DYNAMIC);
+        assert!(has_call, "partial application should use CALL_DYNAMIC");
     }
 
     #[test]
@@ -670,7 +670,7 @@ mod tests {
             "(define f (lambdas (a b) (+ a b)))\n\
              (define g (lambda (x) (f x x)))",
         );
-        let has_call_n = prog.code.windows(1).any(|w| w[0] == op::CALL_N || w[0] == op::TAIL_CALL_N);
-        assert!(has_call_n, "exact-arity call to known global should use CALL_N");
+        let has_call_n = prog.code.windows(1).any(|w| w[0] == op::CALL || w[0] == op::TAIL_CALL);
+        assert!(has_call_n, "exact-arity call to known global should use CALL");
     }
 }

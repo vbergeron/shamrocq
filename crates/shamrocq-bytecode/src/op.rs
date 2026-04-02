@@ -26,10 +26,10 @@
 ///   FIXPOINT          cap_idx:u8
 ///
 ///   -- Control flow (calls) --
-///   CALL1
-///   TAIL_CALL1
-///   CALL_N            code_addr:u16le  n_args:u8
-///   TAIL_CALL_N       code_addr:u16le  n_args:u8
+///   CALL_DYNAMIC
+///   TAIL_CALL_DYNAMIC
+///   CALL              code_addr:u16le  n_args:u8
+///   TAIL_CALL         code_addr:u16le  n_args:u8
 ///   RET
 ///
 ///   -- Control flow (branching) --
@@ -74,10 +74,10 @@ pub const CLOSURE: u8 = 0x0C;
 pub const FIXPOINT: u8 = 0x0D;
 
 // Control flow (calls)
-pub const CALL1: u8 = 0x0E;
-pub const TAIL_CALL1: u8 = 0x0F;
-pub const CALL_N: u8 = 0x10;
-pub const TAIL_CALL_N: u8 = 0x11;
+pub const CALL_DYNAMIC: u8 = 0x0E;
+pub const TAIL_CALL_DYNAMIC: u8 = 0x0F;
+pub const CALL: u8 = 0x10;
+pub const TAIL_CALL: u8 = 0x11;
 pub const RET: u8 = 0x12;
 
 // Control flow (branching)

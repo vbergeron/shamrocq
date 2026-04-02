@@ -55,8 +55,8 @@ See [doc/CODEGEN.md](doc/CODEGEN.md) for details.
 - **Stack** grows downward from the other end of the same buffer
 - **Frame-local reclamation** reclaims heap memory on function return when
   the result does not reference the frame's allocations
-- **Direct calls** (`CALL_N`) bypass the curried closure chain for known
-  multi-arity globals at exact arity
+- **Direct calls** (`CALL`) bypass the curried closure chain for known
+  globals at exact arity
 - **Match** dispatches via O(1) jump table indexed by constructor tag
 
 See [doc/VM.md](doc/VM.md) for internals and [doc/BYTECODE.md](doc/BYTECODE.md)

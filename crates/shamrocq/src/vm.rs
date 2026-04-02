@@ -318,7 +318,7 @@ impl<'buf> Vm<'buf> {
                     stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
-                op::CALL1 => {
+                op::CALL_DYNAMIC => {
                     let arg = self.arena.stack_pop();
                     let func = self.arena.stack_pop();
 
@@ -375,7 +375,7 @@ impl<'buf> Vm<'buf> {
                     }
                 }
 
-                op::TAIL_CALL1 => {
+                op::TAIL_CALL_DYNAMIC => {
                     let arg = self.arena.stack_pop();
                     let func = self.arena.stack_pop();
 
@@ -458,7 +458,7 @@ impl<'buf> Vm<'buf> {
                     }
                 }
 
-                op::CALL_N => {
+                op::CALL => {
                     let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
                     let n_args = code[pc + 2] as usize;
                     pc += 3;
@@ -482,7 +482,7 @@ impl<'buf> Vm<'buf> {
                     stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
-                op::TAIL_CALL_N => {
+                op::TAIL_CALL => {
                     let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
                     let n_args = code[pc + 2] as usize;
 
