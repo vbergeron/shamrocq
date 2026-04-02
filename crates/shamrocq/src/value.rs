@@ -104,6 +104,9 @@ impl Value {
         Value(IMM_INTEGER | ((n as u32) & PAYLOAD_29))
     }
 
+    pub const ZERO: Self = Value::integer(0);
+    pub const ONE: Self = Value::integer(1);
+
     pub const fn is_integer(self) -> bool {
         self.is_immediate() && (self.0 & IMM_SUB_MASK) == IMM_INTEGER
     }

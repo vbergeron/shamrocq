@@ -225,8 +225,14 @@ impl Emitter {
 
     pub fn emit_int(&mut self, n: i32) {
         self.flush_pending_loads();
-        self.code.push(op::INT);
-        self.code.extend_from_slice(&n.to_le_bytes());
+        match n {
+            0 => self.code.push(op::INT0),
+            1 => self.code.push(op::INT1),
+            _ => {
+                self.code.push(op::INT);
+                self.code.extend_from_slice(&n.to_le_bytes());
+            }
+        }
     }
 
     pub fn emit_add(&mut self) { self.flush_pending_loads(); self.code.push(op::ADD); }

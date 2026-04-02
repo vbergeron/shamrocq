@@ -36,6 +36,8 @@
 ///   ERROR
 ///
 ///   -- Integer --
+///   INT0
+///   INT1
 ///   INT               value:i32le
 ///   ADD
 ///   SUB
@@ -99,3 +101,5 @@ pub const BYTES_CONCAT: u8 = 0x22;
 
 // Specialized
 pub const PACK0: u8 = 0x23;
+pub const INT0: u8 = 0x24;
+pub const INT1: u8 = 0x25;

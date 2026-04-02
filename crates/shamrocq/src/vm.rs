@@ -706,6 +706,16 @@ impl<'buf> Vm<'buf> {
                     self.arena.stack_pop();
                 }
 
+                op::INT0 => {
+                    self.arena.stack_push(Value::ZERO)?;
+                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                }
+
+                op::INT1 => {
+                    self.arena.stack_push(Value::ONE)?;
+                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                }
+
                 op::INT => {
                     let n = i32::from_le_bytes([
                         code[pc],

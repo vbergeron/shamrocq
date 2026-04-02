@@ -205,6 +205,7 @@ fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
             }
             op::JMP => { pc += 2; }
             op::ERROR => {}
+            op::INT0 | op::INT1 => {}
             op::INT => { pc += 4; }
             op::ADD | op::SUB | op::MUL | op::DIV | op::NEG | op::EQ | op::LT => {}
             op::BYTES => {
@@ -565,6 +566,8 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
             op::ERROR => {
                 instr!(instr_pc, "ERROR");
             }
+            op::INT0 => instr!(instr_pc, "INT0"),
+            op::INT1 => instr!(instr_pc, "INT1"),
             op::INT => {
                 let value = read_i32le(code, pc)?;
                 pc += 4;
