@@ -14,6 +14,8 @@
 ///   DROP              n:u8
 ///   SLIDE1
 ///   SLIDE             n:u8
+///   DUP
+///   OVER
 ///
 ///   -- Data --
 ///   PACK0             tag:u8
@@ -109,3 +111,5 @@ pub const INT1: u8 = 0x25;
 pub const SLIDE1: u8 = 0x26;
 pub const MATCH2: u8 = 0x27;
 pub const FUNCTION: u8 = 0x28;
+pub const DUP: u8 = 0x29;
+pub const OVER: u8 = 0x2A;

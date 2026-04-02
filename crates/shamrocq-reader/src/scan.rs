@@ -91,7 +91,7 @@ pub fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
             op::ERROR => {}
             op::INT0 | op::INT1 => {}
             op::INT => { pc += 4; }
-            op::ADD | op::SUB | op::MUL | op::DIV | op::NEG | op::EQ | op::LT | op::SLIDE1 => {}
+            op::ADD | op::SUB | op::MUL | op::DIV | op::NEG | op::EQ | op::LT | op::SLIDE1 | op::DUP | op::OVER => {}
             op::BYTES => {
                 let len = code[pc] as usize;
                 pc += 1 + len;

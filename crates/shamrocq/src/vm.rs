@@ -743,6 +743,18 @@ impl<'buf> Vm<'buf> {
                     self.arena.stack_push(Value::foreign_fn(idx, arity))?;
                 }
 
+                op::DUP => {
+                    let v = self.arena.stack_peek(0);
+                    self.arena.stack_push(v)?;
+                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                }
+
+                op::OVER => {
+                    let v = self.arena.stack_peek(1);
+                    self.arena.stack_push(v)?;
+                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                }
+
                 _ => return Err(VmError::InvalidBytecode),
             }
         }

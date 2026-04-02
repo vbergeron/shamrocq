@@ -250,6 +250,9 @@ impl Emitter {
         }
     }
 
+    pub fn emit_dup(&mut self)  { self.flush_pending_loads(); self.code.push(op::DUP); }
+    pub fn emit_over(&mut self) { self.flush_pending_loads(); self.code.push(op::OVER); }
+
     pub fn emit_add(&mut self) { self.flush_pending_loads(); self.code.push(op::ADD); }
     pub fn emit_sub(&mut self) { self.flush_pending_loads(); self.code.push(op::SUB); }
     pub fn emit_mul(&mut self) { self.flush_pending_loads(); self.code.push(op::MUL); }

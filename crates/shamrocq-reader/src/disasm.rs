@@ -265,6 +265,8 @@ pub fn disassemble(blob: &[u8], filename: &str) -> Result<Disassembly, String> {
                 pc += 4;
                 emit!("INT", format!("{}", value));
             }
+            op::DUP  => emit!("DUP"),
+            op::OVER => emit!("OVER"),
             op::ADD => emit!("ADD"),
             op::SUB => emit!("SUB"),
             op::MUL => emit!("MUL"),
