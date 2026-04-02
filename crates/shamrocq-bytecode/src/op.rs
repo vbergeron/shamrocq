@@ -12,6 +12,7 @@
 ///   LOAD3             idx_a:u8  idx_b:u8  idx_c:u8
 ///   GLOBAL            idx:u16le
 ///   DROP              n:u8
+///   SLIDE1
 ///   SLIDE             n:u8
 ///
 ///   -- Data --
@@ -103,3 +104,4 @@ pub const BYTES_CONCAT: u8 = 0x22;
 pub const PACK0: u8 = 0x23;
 pub const INT0: u8 = 0x24;
 pub const INT1: u8 = 0x25;
+pub const SLIDE1: u8 = 0x26;

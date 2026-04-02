@@ -207,7 +207,7 @@ fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
             op::ERROR => {}
             op::INT0 | op::INT1 => {}
             op::INT => { pc += 4; }
-            op::ADD | op::SUB | op::MUL | op::DIV | op::NEG | op::EQ | op::LT => {}
+            op::ADD | op::SUB | op::MUL | op::DIV | op::NEG | op::EQ | op::LT | op::SLIDE1 => {}
             op::BYTES => {
                 let len = code[pc] as usize;
                 pc += 1 + len;
@@ -456,6 +456,10 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
                 pc += 1;
                 bind_depth = bind_depth.saturating_sub(n as usize);
                 instr!(instr_pc, "DROP", "{}", n);
+            }
+            op::SLIDE1 => {
+                bind_depth = bind_depth.saturating_sub(1);
+                instr!(instr_pc, "SLIDE1");
             }
             op::SLIDE => {
                 let n = read_u8(code, pc)?;

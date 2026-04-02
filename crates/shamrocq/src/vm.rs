@@ -682,6 +682,13 @@ impl<'buf> Vm<'buf> {
                     self.arena.set_stack_bot_pos(bot + n);
                 }
 
+                op::SLIDE1 => {
+                    let result = self.arena.stack_pop();
+                    let bot = self.arena.stack_bot_pos();
+                    self.arena.set_stack_bot_pos(bot + 1);
+                    self.arena.stack_push(result)?;
+                }
+
                 op::SLIDE => {
                     let n = code[pc] as usize;
                     pc += 1;

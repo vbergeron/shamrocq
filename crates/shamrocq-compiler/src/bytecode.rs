@@ -64,8 +64,12 @@ impl Emitter {
     /// Keep top-of-stack, remove n items below it.
     pub fn emit_slide(&mut self, n: u8) {
         self.flush_pending_loads();
-        self.code.push(op::SLIDE);
-        self.code.push(n);
+        if n == 1 {
+            self.code.push(op::SLIDE1);
+        } else {
+            self.code.push(op::SLIDE);
+            self.code.push(n);
+        }
     }
 
     // Data
