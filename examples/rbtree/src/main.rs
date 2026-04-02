@@ -29,7 +29,7 @@ fn main() -> ! {
     let prog = Program::from_blob(BYTECODE)
         .unwrap_or_else(|e| vm_exit_err(e));
     let mut vm = Vm::new(buf);
-    vm.load_program(&prog).unwrap_or_else(|e| vm_exit_err(e));
+    vm.load(&prog).unwrap_or_else(|e| vm_exit_err(e));
 
     let n = 50;
 

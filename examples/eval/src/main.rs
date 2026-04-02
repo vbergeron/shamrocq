@@ -37,7 +37,7 @@ fn main() -> ! {
     let prog = Program::from_blob(BYTECODE)
         .unwrap_or_else(|e| vm_exit_err(e));
     let mut vm = Vm::new(buf);
-    vm.load_program(&prog).unwrap_or_else(|e| vm_exit_err(e));
+    vm.load(&prog).unwrap_or_else(|e| vm_exit_err(e));
 
     for &(a, b, f) in &[(1i32, 1i32, 100i32), (1, 2, 200), (2, 2, 500), (2, 3, 1000)] {
         let r = vm

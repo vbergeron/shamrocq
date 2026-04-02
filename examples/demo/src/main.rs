@@ -48,7 +48,7 @@ fn main() -> ! {
     let mut vm = Vm::new(&mut buf);
 
     vm.register_foreign(foreign::PRINT_INT, print_int);
-    vm.load_program(&prog).unwrap();
+    vm.load(&prog).unwrap();
 
     // fib(10) = 55
     let r = vm.call(funcs::FIB, &[Value::integer(10)]).unwrap();
