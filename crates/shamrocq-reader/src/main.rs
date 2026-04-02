@@ -184,6 +184,12 @@ fn scan_code(code: &[u8]) -> Result<ScanResult, String> {
             op::UNPACK => { pc += 1; }
             op::BIND => { pc += 1; }
             op::FUNCTION => { pc += 3; }
+            op::CLOSURE0 => {
+                let target = u16::from_le_bytes([code[pc], code[pc + 1]]);
+                let arity = code[pc + 2];
+                pc += 3;
+                closures.push(ClosureRef { pc: instr_pc, target, arity, n_captures: 0 });
+            }
             op::CLOSURE => {
                 let target = u16::from_le_bytes([code[pc], code[pc + 1]]);
                 let arity = code[pc + 2];
@@ -500,17 +506,20 @@ fn disassemble(blob: &[u8], c: &C) -> Result<(), String> {
                 pc += 3;
                 instr!(instr_pc, "FUNCTION", "idx={} arity={}", idx, arity);
             }
+            op::CLOSURE0 => {
+                let code_addr = read_u16le(code, pc)?;
+                let arity = read_u8(code, pc + 2)?;
+                pc += 3;
+                let lbl = fmt_label(code_addr, &labels, c);
+                instr!(instr_pc, "CLOSURE0", "fn code+0x{:04X}{} arity={}", code_addr, lbl, arity);
+            }
             op::CLOSURE => {
                 let code_addr = read_u16le(code, pc)?;
                 let arity = read_u8(code, pc + 2)?;
                 let n_cap = read_u8(code, pc + 3)?;
                 pc += 4;
                 let lbl = fmt_label(code_addr, &labels, c);
-                if n_cap == 0 {
-                    instr!(instr_pc, "CLOSURE", "fn code+0x{:04X}{} arity={}", code_addr, lbl, arity);
-                } else {
-                    instr!(instr_pc, "CLOSURE", "code+0x{:04X}{} arity={} bound={}", code_addr, lbl, arity, n_cap);
-                }
+                instr!(instr_pc, "CLOSURE", "code+0x{:04X}{} arity={} bound={}", code_addr, lbl, arity, n_cap);
             }
             op::FIXPOINT => {
                 let cap_idx = read_u8(code, pc)?;

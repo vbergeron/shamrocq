@@ -415,20 +415,24 @@ impl<'buf> Vm<'buf> {
                     stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
+                op::CLOSURE0 => {
+                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
+                    let arity = code[pc + 2];
+                    pc += 3;
+                    self.arena.stack_push(Value::function(code_addr, arity))?;
+                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                }
+
                 op::CLOSURE => {
                     let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
                     let arity = code[pc + 2];
                     let n_cap = code[pc + 3] as usize;
                     pc += 4;
-                    if n_cap == 0 {
-                        self.arena.stack_push(Value::function(code_addr, arity))?;
-                    } else {
-                        let val = self.arena.alloc_closure_from_stack(code_addr, arity, n_cap)?;
-                        self.arena.stack_push(val)?;
-                        stat!(self, alloc_count_closure += 1);
-                        stat!(self, alloc_bytes_total += ((2 + n_cap) * 4) as u32);
-                        stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                    }
+                    let val = self.arena.alloc_closure_from_stack(code_addr, arity, n_cap)?;
+                    self.arena.stack_push(val)?;
+                    stat!(self, alloc_count_closure += 1);
+                    stat!(self, alloc_bytes_total += ((2 + n_cap) * 4) as u32);
+                    stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
                     stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 

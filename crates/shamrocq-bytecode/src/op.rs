@@ -21,6 +21,7 @@
 ///   UNPACK            n:u8
 ///   BIND              n:u8
 ///   FUNCTION          idx:u16le  arity:u8
+///   CLOSURE0          code_addr:u16le  arity:u8
 ///   CLOSURE           code_addr:u16le  arity:u8  n_captures:u8
 ///   FIXPOINT          cap_idx:u8
 ///
@@ -107,3 +108,4 @@ pub const INT0: u8 = 0x24;
 pub const INT1: u8 = 0x25;
 pub const SLIDE1: u8 = 0x26;
 pub const MATCH2: u8 = 0x27;
+pub const CLOSURE0: u8 = 0x28;

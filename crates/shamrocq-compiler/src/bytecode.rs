@@ -107,10 +107,16 @@ impl Emitter {
 
     pub fn emit_closure(&mut self, code_addr: u16, arity: u8, n_captures: u8) {
         self.flush_pending_loads();
-        self.code.push(op::CLOSURE);
-        self.code.extend_from_slice(&code_addr.to_le_bytes());
-        self.code.push(arity);
-        self.code.push(n_captures);
+        if n_captures == 0 {
+            self.code.push(op::CLOSURE0);
+            self.code.extend_from_slice(&code_addr.to_le_bytes());
+            self.code.push(arity);
+        } else {
+            self.code.push(op::CLOSURE);
+            self.code.extend_from_slice(&code_addr.to_le_bytes());
+            self.code.push(arity);
+            self.code.push(n_captures);
+        }
     }
 
     /// FIXPOINT(cap_idx): Peek TOS (a closure), patch its

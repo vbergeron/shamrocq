@@ -245,7 +245,7 @@ impl Compiler {
                 let n_captures = free.len() as u8;
                 let total_arity = arity + n_captures;
                 self.emitter.emit_closure(0, total_arity, n_captures);
-                let code_addr_pos = self.emitter.pos() - 4;
+                let code_addr_pos = self.emitter.pos() - if n_captures == 0 { 3 } else { 4 };
 
                 self.last_closure_captures = Some(free.clone());
 
