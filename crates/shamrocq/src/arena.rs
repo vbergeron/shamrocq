@@ -1,4 +1,7 @@
 use crate::bytes;
+use crate::stats::stat;
+#[cfg(feature = "stats")]
+use crate::stats::ArenaStats;
 use crate::value::Value;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -13,10 +16,19 @@ const GC_FWD_SHIFT: u32 = 13;
 const GC_FWD_MASK: u32 = 0xFFFF;
 const GC_SIZE_MASK: u32 = 0x1FFF;
 
+const FRAME_HEADER_WORDS: usize = 3;
+
+pub struct FrameHeader {
+    pub pc: usize,
+    pub frame_base: usize,
+}
+
 pub struct Arena<'a> {
     buf: &'a mut [u32],
     heap_top: usize,
     stack_bot: usize,
+    #[cfg(feature = "stats")]
+    pub stats: ArenaStats,
 }
 
 impl<'a> Arena<'a> {
@@ -26,6 +38,8 @@ impl<'a> Arena<'a> {
             buf,
             heap_top: 0,
             stack_bot: len,
+            #[cfg(feature = "stats")]
+            stats: ArenaStats::default(),
         }
     }
 
@@ -45,6 +59,8 @@ impl<'a> Arena<'a> {
             return Err(ArenaError::OutOfMemory);
         }
         self.heap_top = end;
+        stat!(self, alloc_bytes_total += (words * 4) as u32);
+        stat!(self, peak_heap_bytes = max self.heap_top * 4);
         Ok(base)
     }
 
@@ -113,6 +129,7 @@ impl<'a> Arena<'a> {
             let field = self.stack_pop();
             self.write_word(offset + 1 + i, field.raw());
         }
+        stat!(self, alloc_count_ctor += 1);
         Ok(Value::ctor(tag, offset))
     }
 
@@ -165,6 +182,7 @@ impl<'a> Arena<'a> {
             let val = self.stack_pop();
             self.write_word(offset + 2 + i, val.raw());
         }
+        stat!(self, alloc_count_closure += 1);
         Ok(Value::closure(offset))
     }
 
@@ -252,10 +270,6 @@ impl<'a> Arena<'a> {
         let offset = self.alloc(2 + data_words)?;
         self.write_gc_header(offset, true, 2 + data_words);
         self.write_word(offset + 1, total as u32);
-        // Copy byte data from a then b into the new allocation.
-        // We must read source data before writing to avoid aliasing issues,
-        // but since alloc always grows heap_top forward and sources are behind,
-        // the regions never overlap. Use raw pointer copies.
         let buf_ptr = self.buf.as_mut_ptr();
         unsafe {
             let dst = (buf_ptr.add(offset + 2)) as *mut u8;
@@ -267,6 +281,38 @@ impl<'a> Arena<'a> {
         Ok(Value::bytes(offset))
     }
 
+    // -- frame management --
+
+    pub fn stack_frame_load(&self, hdr: &FrameHeader, idx: usize) -> Value {
+        Value::from_raw(self.buf[hdr.frame_base - (idx + 1)])
+    }
+
+    pub fn stack_frame_push(&mut self, hdr: &FrameHeader) -> Result<(), ArenaError> {
+        self.stack_push(Value::from_raw(self.heap_top as u32))?;
+        self.stack_push(Value::from_raw(hdr.pc as u32))?;
+        self.stack_push(Value::from_raw(hdr.frame_base as u32))
+    }
+
+    pub fn stack_frame_pop(&mut self, hdr: &FrameHeader, result: Value) -> Result<FrameHeader, ArenaError> {
+        let fb = self.stack_read_at(hdr.frame_base).raw() as usize;
+        let pc = self.stack_read_at(hdr.frame_base + 1).raw() as usize;
+        let heap = self.stack_read_at(hdr.frame_base + 2).raw() as usize;
+        self.try_reclaim(result, heap);
+        self.set_stack_bot_pos(hdr.frame_base + FRAME_HEADER_WORDS);
+        self.stack_push(result)?;
+        Ok(FrameHeader { pc, frame_base: fb })
+    }
+
+    fn try_reclaim(&mut self, result: Value, saved_heap_top: usize) {
+        let current = self.heap_top;
+        let refs_new_heap = result.is_reference() && result.offset() >= saved_heap_top;
+        if current > saved_heap_top && !refs_new_heap {
+            stat!(self, reclaim_count += 1);
+            stat!(self, reclaim_bytes_total += ((current - saved_heap_top) * 4) as u32);
+            self.heap_top = saved_heap_top;
+        }
+    }
+
     // -- stack (grows downward) --
 
     #[inline(always)]
@@ -276,6 +322,7 @@ impl<'a> Arena<'a> {
         }
         self.stack_bot -= 1;
         self.buf[self.stack_bot] = val.raw();
+        stat!(self, peak_stack_bytes = max (self.buf.len() - self.stack_bot) * 4);
         Ok(())
     }
 

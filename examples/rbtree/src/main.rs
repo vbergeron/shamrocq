@@ -51,7 +51,7 @@ fn main() -> ! {
         n,
         if ok.tag() == ctors::TRUE { "true" } else { "false" }
     );
-    let _ = hprintln!("{}", vm.stats);
+    let _ = hprintln!("{}", vm.combined_stats());
 
     debug::exit(debug::EXIT_SUCCESS);
     loop {}

@@ -1,9 +1,9 @@
-use crate::arena::Arena;
+use crate::arena::{Arena, FrameHeader};
 use crate::bytes;
 use crate::program::{Program, VmError};
 use crate::stats::stat;
 #[cfg(feature = "stats")]
-use crate::stats::Stats;
+use crate::stats::ExecStats;
 use crate::stats::MemSnapshot;
 use crate::value::Value;
 use shamrocq_bytecode::op;
@@ -18,8 +18,6 @@ fn unregistered_foreign_fn(_: &mut Vm<'_>, _: Value) -> Result<Value, VmError> {
     Err(VmError::NotRegistered)
 }
 
-const FRAME_HEADER_WORDS: usize = 3;
-
 pub struct Vm<'buf> {
     pub arena: Arena<'buf>,
     globals: [Value; 64],
@@ -27,7 +25,7 @@ pub struct Vm<'buf> {
     code: &'buf [u8],
     foreign_fns: [ForeignFn; MAX_FOREIGN_FNS],
     #[cfg(feature = "stats")]
-    pub stats: Stats,
+    pub stats: ExecStats,
 }
 
 impl<'buf> Vm<'buf> {
@@ -39,8 +37,13 @@ impl<'buf> Vm<'buf> {
             code: &[],
             foreign_fns: [unregistered_foreign_fn; MAX_FOREIGN_FNS],
             #[cfg(feature = "stats")]
-            stats: Stats::default(),
+            stats: ExecStats::default(),
         }
+    }
+
+    #[cfg(feature = "stats")]
+    pub fn combined_stats(&self) -> crate::stats::Stats {
+        crate::stats::Stats::from(&self.arena.stats, &self.stats)
     }
 
     pub fn register_foreign(&mut self, idx: u16, f: ForeignFn) {
@@ -65,10 +68,7 @@ impl<'buf> Vm<'buf> {
 
     fn run_gc(&mut self) {
         let n = self.n_globals as usize;
-        #[allow(unused_variables)]
-        let gc_stats = self.arena.collect_garbage(&mut self.globals[..n]);
-        stat!(self, gc_count += 1);
-        stat!(self, gc_bytes_reclaimed += (gc_stats.words_reclaimed * 4) as u32);
+        self.arena.collect_garbage(&mut self.globals[..n]);
     }
 
     /// Write a binary dump of the VM state into `dst`.
@@ -191,26 +191,15 @@ impl<'buf> Vm<'buf> {
         }
     }
 
-    fn try_reclaim(&mut self, result: Value, saved_heap_top: usize) {
-        let current = self.arena.heap_used();
-        let refs_new_heap = result.is_reference() && result.offset() >= saved_heap_top;
-        if current > saved_heap_top && !refs_new_heap {
-            stat!(self, reclaim_count += 1);
-            stat!(self, reclaim_bytes_total += ((current - saved_heap_top) * 4) as u32);
-            self.arena.set_heap_top(saved_heap_top);
-        }
-    }
-
     fn eval(&mut self, pc: usize, frame_base: usize) -> Result<Value, VmError> {
         let code = self.code;
-        let mut pc = pc;
+        let mut hdr = FrameHeader { pc, frame_base };
         let mut call_depth: usize = 0;
-        let mut frame_base = frame_base;
 
         const GC_THRESHOLD: usize = 64;
 
         loop {
-            if pc >= code.len() {
+            if hdr.pc >= code.len() {
                 return Err(VmError::InvalidBytecode);
             }
 
@@ -221,101 +210,87 @@ impl<'buf> Vm<'buf> {
                 }
             }
 
-            stat!(self, exec_instruction_count += 1);
+            let opcode = code[hdr.pc];
+            hdr.pc += 1;
 
-            let opcode = code[pc];
-            pc += 1;
+            #[cfg(feature = "stats")]
+            { self.stats.opcode_counts[opcode as usize] += 1; }
 
             match opcode {
                 op::PACK0 => {
-                    let tag = code[pc];
+                    let tag = code[hdr.pc];
                     self.arena.stack_push(Value::nullary_ctor(tag))?;
-                    pc += 1;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 1;
                 }
 
                 op::PACK => {
-                    let tag = code[pc];
-                    let arity = code[pc + 1] as usize;
+                    let tag = code[hdr.pc];
+                    let arity = code[hdr.pc + 1] as usize;
                     let val = self.arena.alloc_ctor_from_stack(tag, arity)?;
                     self.arena.stack_push(val)?;
-                    pc += 2;
-                    stat!(self, alloc_count_ctor += 1);
-                    stat!(self, alloc_bytes_total += ((1 + arity) * 4) as u32);
-                    stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 2;
                 }
 
                 op::UNPACK => {
-                    let n = code[pc] as usize;
-                    pc += 1;
+                    let n = code[hdr.pc] as usize;
                     let scrutinee = self.arena.stack_pop();
                     for i in 0..n {
                         let field = self.arena.ctor_field(scrutinee, i);
                         self.arena.stack_push(field)?;
                     }
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 1;
                 }
 
                 op::LOAD => {
-                    let idx = code[pc] as usize;
-                    pc += 1;
-                    let val = self.arena.stack_read_at(frame_base - (idx + 1));
+                    let idx = code[hdr.pc] as usize;
+                    let val = self.arena.stack_frame_load(&hdr, idx);
                     self.arena.stack_push(val)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 1;
                 }
 
                 op::LOAD2 => {
-                    let idx_a = code[pc] as usize;
-                    let idx_b = code[pc + 1] as usize;
-                    pc += 2;
-                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1));
-                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1));
+                    let idx_a = code[hdr.pc] as usize;
+                    let idx_b = code[hdr.pc + 1] as usize;
+                    let a = self.arena.stack_frame_load(&hdr, idx_a);
+                    let b = self.arena.stack_frame_load(&hdr, idx_b);
                     self.arena.stack_push(a)?;
                     self.arena.stack_push(b)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 2;
                 }
 
                 op::LOAD3 => {
-                    let idx_a = code[pc] as usize;
-                    let idx_b = code[pc + 1] as usize;
-                    let idx_c = code[pc + 2] as usize;
-                    pc += 3;
-                    let a = self.arena.stack_read_at(frame_base - (idx_a + 1));
-                    let b = self.arena.stack_read_at(frame_base - (idx_b + 1));
-                    let c = self.arena.stack_read_at(frame_base - (idx_c + 1));
+                    let idx_a = code[hdr.pc] as usize;
+                    let idx_b = code[hdr.pc + 1] as usize;
+                    let idx_c = code[hdr.pc + 2] as usize;
+                    let a = self.arena.stack_frame_load(&hdr, idx_a);
+                    let b = self.arena.stack_frame_load(&hdr, idx_b);
+                    let c = self.arena.stack_frame_load(&hdr, idx_c);
                     self.arena.stack_push(a)?;
                     self.arena.stack_push(b)?;
                     self.arena.stack_push(c)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 3;
                 }
 
                 op::GLOBAL => {
-                    let idx = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
-                    pc += 2;
+                    let idx = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]) as usize;
                     self.arena.stack_push(self.globals[idx])?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 2;
                 }
 
                 op::FUNCTION => {
-                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
-                    let arity = code[pc + 2];
-                    pc += 3;
+                    let code_addr = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]);
+                    let arity = code[hdr.pc + 2];
                     self.arena.stack_push(Value::function(code_addr, arity))?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 3;
                 }
 
                 op::CLOSURE => {
-                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]);
-                    let arity = code[pc + 2];
-                    let n_cap = code[pc + 3] as usize;
-                    pc += 4;
+                    let code_addr = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]);
+                    let arity = code[hdr.pc + 2];
+                    let n_cap = code[hdr.pc + 3] as usize;
                     let val = self.arena.alloc_closure_from_stack(code_addr, arity, n_cap)?;
                     self.arena.stack_push(val)?;
-                    stat!(self, alloc_count_closure += 1);
-                    stat!(self, alloc_bytes_total += ((2 + n_cap) * 4) as u32);
-                    stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 4;
                 }
 
                 op::CALL_DYNAMIC => {
@@ -329,21 +304,15 @@ impl<'buf> Vm<'buf> {
                     } else if func.is_function() {
                         let arity = func.fn_arity();
                         if arity == 1 {
-                            self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
-                            self.arena.stack_push(Value::from_raw(pc as u32))?;
-                            self.arena.stack_push(Value::from_raw(frame_base as u32))?;
+                            self.arena.stack_frame_push(&hdr)?;
                             call_depth += 1;
-                            frame_base = self.arena.stack_bot_pos();
+                            hdr.frame_base = self.arena.stack_bot_pos();
                             self.arena.stack_push(arg)?;
-                            pc = func.fn_addr() as usize;
-                            stat!(self, exec_call_count += 1);
-                            stat!(self, exec_peak_call_depth = max call_depth as u32);
-                            stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                            hdr.pc = func.fn_addr() as usize;
+                            stat!(self, peak_call_depth = max call_depth as u32);
                         } else {
                             let cl = self.arena.alloc_closure(func.fn_addr(), arity, &[arg])?;
                             self.arena.stack_push(cl)?;
-                            stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                            stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                         }
                     } else if func.is_closure() {
                         let bound = self.arena.closure_bound_count(func);
@@ -351,24 +320,18 @@ impl<'buf> Vm<'buf> {
                         if bound + 1 < arity {
                             let cl = self.arena.extend_closure(func, arg)?;
                             self.arena.stack_push(cl)?;
-                            stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                            stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                         } else {
                             let code_addr = self.arena.closure_code(func);
-                            self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
-                            self.arena.stack_push(Value::from_raw(pc as u32))?;
-                            self.arena.stack_push(Value::from_raw(frame_base as u32))?;
+                            self.arena.stack_frame_push(&hdr)?;
                             call_depth += 1;
-                            frame_base = self.arena.stack_bot_pos();
+                            hdr.frame_base = self.arena.stack_bot_pos();
                             for i in 0..bound {
                                 let v = self.arena.closure_bound(func, i);
                                 self.arena.stack_push(v)?;
                             }
                             self.arena.stack_push(arg)?;
-                            pc = code_addr as usize;
-                            stat!(self, exec_call_count += 1);
-                            stat!(self, exec_peak_call_depth = max call_depth as u32);
-                            stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                            hdr.pc = code_addr as usize;
+                            stat!(self, peak_call_depth = max call_depth as u32);
                         }
                     } else {
                         return Err(VmError::NotCallable);
@@ -383,75 +346,49 @@ impl<'buf> Vm<'buf> {
                         let f = self.foreign_fns[func.fn_addr() as usize];
                         let result = f(self, arg)?;
                         if call_depth == 0 {
-                            self.arena.set_stack_bot_pos(frame_base);
+                            self.arena.set_stack_bot_pos(hdr.frame_base);
                             self.arena.stack_push(result)?;
                             return Ok(result);
                         }
-                        let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                        let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
-                        let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
-                        self.try_reclaim(result, saved_heap);
-                        self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
-                        self.arena.stack_push(result)?;
+                        hdr = self.arena.stack_frame_pop(&hdr, result)?;
                         call_depth -= 1;
-                        pc = saved_pc;
-                        frame_base = saved_fb;
                     } else if func.is_function() {
                         let arity = func.fn_arity();
                         if arity == 1 {
-                            self.arena.set_stack_bot_pos(frame_base);
+                            self.arena.set_stack_bot_pos(hdr.frame_base);
                             self.arena.stack_push(arg)?;
-                            pc = func.fn_addr() as usize;
-                            stat!(self, exec_tail_call_count += 1);
-                            stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                            hdr.pc = func.fn_addr() as usize;
                         } else {
                             let cl = self.arena.alloc_closure(func.fn_addr(), arity, &[arg])?;
                             if call_depth == 0 {
-                                self.arena.set_stack_bot_pos(frame_base);
+                                self.arena.set_stack_bot_pos(hdr.frame_base);
                                 self.arena.stack_push(cl)?;
                                 return Ok(cl);
                             }
-                            let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
-                            let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
-                            self.try_reclaim(cl, saved_heap);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
-                            self.arena.stack_push(cl)?;
+                            hdr = self.arena.stack_frame_pop(&hdr, cl)?;
                             call_depth -= 1;
-                            pc = saved_pc;
-                            frame_base = saved_fb;
                         }
                     } else if func.is_closure() {
                         let bound = self.arena.closure_bound_count(func);
                         let arity = self.arena.closure_arity(func) as usize;
                         if bound + 1 < arity {
                             let cl = self.arena.extend_closure(func, arg)?;
-                            stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
                             if call_depth == 0 {
-                                self.arena.set_stack_bot_pos(frame_base);
+                                self.arena.set_stack_bot_pos(hdr.frame_base);
                                 self.arena.stack_push(cl)?;
                                 return Ok(cl);
                             }
-                            let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                            let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
-                            let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
-                            self.try_reclaim(cl, saved_heap);
-                            self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
-                            self.arena.stack_push(cl)?;
+                            hdr = self.arena.stack_frame_pop(&hdr, cl)?;
                             call_depth -= 1;
-                            pc = saved_pc;
-                            frame_base = saved_fb;
                         } else {
                             let code_addr = self.arena.closure_code(func);
-                            self.arena.set_stack_bot_pos(frame_base);
+                            self.arena.set_stack_bot_pos(hdr.frame_base);
                             for i in 0..bound {
                                 let v = self.arena.closure_bound(func, i);
                                 self.arena.stack_push(v)?;
                             }
                             self.arena.stack_push(arg)?;
-                            pc = code_addr as usize;
-                            stat!(self, exec_tail_call_count += 1);
-                            stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                            hdr.pc = code_addr as usize;
                         }
                     } else {
                         return Err(VmError::NotCallable);
@@ -459,76 +396,63 @@ impl<'buf> Vm<'buf> {
                 }
 
                 op::CALL => {
-                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
-                    let n_args = code[pc + 2] as usize;
-                    pc += 3;
+                    let code_addr = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]) as usize;
+                    let n_args = code[hdr.pc + 2] as usize;
+                    hdr.pc += 3;
 
                     let mut tmp = [Value::integer(0); 16];
                     for i in (0..n_args).rev() {
                         tmp[i] = self.arena.stack_pop();
                     }
 
-                    self.arena.stack_push(Value::from_raw(self.arena.heap_used() as u32))?;
-                    self.arena.stack_push(Value::from_raw(pc as u32))?;
-                    self.arena.stack_push(Value::from_raw(frame_base as u32))?;
+                    self.arena.stack_frame_push(&hdr)?;
                     call_depth += 1;
-                    frame_base = self.arena.stack_bot_pos();
+                    hdr.frame_base = self.arena.stack_bot_pos();
                     for i in 0..n_args {
                         self.arena.stack_push(tmp[i])?;
                     }
-                    pc = code_addr;
-                    stat!(self, exec_call_count += 1);
-                    stat!(self, exec_peak_call_depth = max call_depth as u32);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc = code_addr;
+                    stat!(self, peak_call_depth = max call_depth as u32);
                 }
 
                 op::TAIL_CALL => {
-                    let code_addr = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
-                    let n_args = code[pc + 2] as usize;
+                    let code_addr = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]) as usize;
+                    let n_args = code[hdr.pc + 2] as usize;
 
                     let mut tmp = [Value::integer(0); 16];
                     for i in (0..n_args).rev() {
                         tmp[i] = self.arena.stack_pop();
                     }
 
-                    self.arena.set_stack_bot_pos(frame_base);
+                    self.arena.set_stack_bot_pos(hdr.frame_base);
                     for i in 0..n_args {
                         self.arena.stack_push(tmp[i])?;
                     }
-                    pc = code_addr;
-                    stat!(self, exec_tail_call_count += 1);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc = code_addr;
                 }
 
                 op::RET => {
                     let result = self.arena.stack_pop();
                     if call_depth == 0 {
-                        self.arena.set_stack_bot_pos(frame_base);
+                        self.arena.set_stack_bot_pos(hdr.frame_base);
                         self.arena.stack_push(result)?;
                         return Ok(result);
                     }
-                    let saved_fb = self.arena.stack_read_at(frame_base).raw() as usize;
-                    let saved_pc = self.arena.stack_read_at(frame_base + 1).raw() as usize;
-                    let saved_heap = self.arena.stack_read_at(frame_base + 2).raw() as usize;
-                    self.try_reclaim(result, saved_heap);
-                    self.arena.set_stack_bot_pos(frame_base + FRAME_HEADER_WORDS);
-                    self.arena.stack_push(result)?;
+                    hdr = self.arena.stack_frame_pop(&hdr, result)?;
                     call_depth -= 1;
-                    pc = saved_pc;
-                    frame_base = saved_fb;
                 }
 
                 op::MATCH2 => {
-                    let base_tag = code[pc] as usize;
-                    let table_start = pc + 1;
-                    pc += 1 + 2 * 3;
+                    let base_tag = code[hdr.pc] as usize;
+                    let table_start = hdr.pc + 1;
+                    hdr.pc += 1 + 2 * 3;
 
                     let scrutinee = self.arena.stack_pop();
                     let scrutinee_tag = scrutinee.tag();
 
                     let idx = (scrutinee_tag as usize).wrapping_sub(base_tag);
                     if idx >= 2 {
-                        return Err(VmError::MatchFailure { scrutinee_tag, pc });
+                        return Err(VmError::MatchFailure { scrutinee_tag, pc: hdr.pc });
                     }
 
                     let entry = table_start + idx * 3;
@@ -539,24 +463,22 @@ impl<'buf> Vm<'buf> {
                     if case_arity > 0 {
                         self.arena.stack_push(scrutinee)?;
                     }
-                    pc = case_offset;
-                    stat!(self, exec_match_count += 1);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc = case_offset;
                 }
 
                 op::MATCH => {
-                    let base_tag = code[pc] as usize;
-                    let n_entries = code[pc + 1] as usize;
-                    pc += 2;
-                    let table_start = pc;
-                    pc += n_entries * 3;
+                    let base_tag = code[hdr.pc] as usize;
+                    let n_entries = code[hdr.pc + 1] as usize;
+                    hdr.pc += 2;
+                    let table_start = hdr.pc;
+                    hdr.pc += n_entries * 3;
 
                     let scrutinee = self.arena.stack_pop();
                     let scrutinee_tag = scrutinee.tag();
 
                     let idx = (scrutinee_tag as usize).wrapping_sub(base_tag);
                     if idx >= n_entries {
-                        return Err(VmError::MatchFailure { scrutinee_tag, pc });
+                        return Err(VmError::MatchFailure { scrutinee_tag, pc: hdr.pc });
                     }
 
                     let entry = table_start + idx * 3;
@@ -567,31 +489,28 @@ impl<'buf> Vm<'buf> {
                     if case_arity > 0 {
                         self.arena.stack_push(scrutinee)?;
                     }
-                    pc = case_offset;
-                    stat!(self, exec_match_count += 1);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc = case_offset;
                 }
 
                 op::JMP => {
-                    pc = u16::from_le_bytes([code[pc], code[pc + 1]]) as usize;
+                    hdr.pc = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]) as usize;
                 }
 
                 op::BIND => {
-                    let n = code[pc] as usize;
-                    pc += 1;
+                    let n = code[hdr.pc] as usize;
                     let scrutinee = self.arena.stack_pop();
                     for i in 0..n {
                         let field = self.arena.ctor_field(scrutinee, i);
                         self.arena.stack_push(field)?;
                     }
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 1;
                 }
 
                 op::DROP => {
-                    let n = code[pc] as usize;
-                    pc += 1;
+                    let n = code[hdr.pc] as usize;
                     let bot = self.arena.stack_bot_pos();
                     self.arena.set_stack_bot_pos(bot + n);
+                    hdr.pc += 1;
                 }
 
                 op::SLIDE1 => {
@@ -602,49 +521,46 @@ impl<'buf> Vm<'buf> {
                 }
 
                 op::SLIDE => {
-                    let n = code[pc] as usize;
-                    pc += 1;
+                    let n = code[hdr.pc] as usize;
                     let result = self.arena.stack_pop();
                     let bot = self.arena.stack_bot_pos();
                     self.arena.set_stack_bot_pos(bot + n);
                     self.arena.stack_push(result)?;
+                    hdr.pc += 1;
                 }
 
                 op::ERROR => {
-                    return Err(VmError::MatchFailure { scrutinee_tag: 0xFF, pc });
+                    return Err(VmError::MatchFailure { scrutinee_tag: 0xFF, pc: hdr.pc });
                 }
 
                 op::FIXPOINT => {
-                    let cap_idx = code[pc] as usize;
-                    pc += 1;
+                    let cap_idx = code[hdr.pc] as usize;
                     let closure = self.arena.stack_peek(0);
                     if cap_idx != 0xFF {
                         self.arena.closure_set_bound(closure, cap_idx, closure);
                     }
                     self.arena.stack_set(1, closure);
                     self.arena.stack_pop();
+                    hdr.pc += 1;
                 }
 
                 op::INT0 => {
                     self.arena.stack_push(Value::ZERO)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
                 op::INT1 => {
                     self.arena.stack_push(Value::ONE)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
                 op::INT => {
                     let n = i32::from_le_bytes([
-                        code[pc],
-                        code[pc + 1],
-                        code[pc + 2],
-                        code[pc + 3],
+                        code[hdr.pc],
+                        code[hdr.pc + 1],
+                        code[hdr.pc + 2],
+                        code[hdr.pc + 3],
                     ]);
-                    pc += 4;
                     self.arena.stack_push(Value::integer(n))?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc += 4;
                 }
 
                 op::ADD => {
@@ -691,13 +607,11 @@ impl<'buf> Vm<'buf> {
                 }
 
                 op::BYTES => {
-                    let len = code[pc] as usize;
-                    pc += 1;
-                    let val = self.arena.alloc_bytes(&code[pc..pc + len])?;
-                    pc += len;
+                    let len = code[hdr.pc] as usize;
+                    let data_start = hdr.pc + 1;
+                    let val = self.arena.alloc_bytes(&code[data_start..data_start + len])?;
                     self.arena.stack_push(val)?;
-                    stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
+                    hdr.pc = data_start + len;
                 }
 
                 op::BYTES_LEN => {
@@ -732,27 +646,23 @@ impl<'buf> Vm<'buf> {
                     }
                     let val = self.arena.bytes_concat(a, b)?;
                     self.arena.stack_push(val)?;
-                    stat!(self, peak_heap_bytes = max self.arena.heap_used() * 4);
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
                 op::FOREIGN => {
-                    let idx = u16::from_le_bytes([code[pc], code[pc + 1]]);
-                    let arity = code[pc + 2];
-                    pc += 3;
+                    let idx = u16::from_le_bytes([code[hdr.pc], code[hdr.pc + 1]]);
+                    let arity = code[hdr.pc + 2];
                     self.arena.stack_push(Value::foreign_fn(idx, arity))?;
+                    hdr.pc += 3;
                 }
 
                 op::DUP => {
                     let v = self.arena.stack_peek(0);
                     self.arena.stack_push(v)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
                 op::OVER => {
                     let v = self.arena.stack_peek(1);
                     self.arena.stack_push(v)?;
-                    stat!(self, peak_stack_bytes = max self.arena.stack_used() * 4);
                 }
 
                 _ => return Err(VmError::InvalidBytecode),

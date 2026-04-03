@@ -1,7 +1,43 @@
 use core::fmt;
+#[cfg(feature = "stats")]
+use shamrocq_bytecode::op;
 
 #[cfg(feature = "stats")]
 #[derive(Debug, Default, Clone)]
+pub struct ArenaStats {
+    pub peak_heap_bytes: usize,
+    pub peak_stack_bytes: usize,
+
+    pub alloc_count_ctor: u32,
+    pub alloc_count_closure: u32,
+    pub alloc_bytes_total: u32,
+
+    pub reclaim_count: u32,
+    pub reclaim_bytes_total: u32,
+
+    pub gc_count: u32,
+    pub gc_bytes_reclaimed: u32,
+}
+
+#[cfg(feature = "stats")]
+#[derive(Debug, Clone)]
+pub struct ExecStats {
+    pub opcode_counts: [usize; 256],
+    pub peak_call_depth: u32,
+}
+
+#[cfg(feature = "stats")]
+impl Default for ExecStats {
+    fn default() -> Self {
+        ExecStats {
+            opcode_counts: [0; 256],
+            peak_call_depth: 0,
+        }
+    }
+}
+
+#[cfg(feature = "stats")]
+#[derive(Debug, Clone)]
 pub struct Stats {
     pub peak_heap_bytes: usize,
     pub peak_stack_bytes: usize,
@@ -10,17 +46,37 @@ pub struct Stats {
     pub alloc_count_closure: u32,
     pub alloc_bytes_total: u32,
 
-    pub exec_instruction_count: u64,
-    pub exec_call_count: u32,
-    pub exec_tail_call_count: u32,
-    pub exec_match_count: u32,
-    pub exec_peak_call_depth: u32,
+    pub opcode_counts: [usize; 256],
+    pub peak_call_depth: u32,
 
     pub reclaim_count: u32,
     pub reclaim_bytes_total: u32,
 
     pub gc_count: u32,
     pub gc_bytes_reclaimed: u32,
+}
+
+#[cfg(feature = "stats")]
+impl Stats {
+    pub fn from(arena: &ArenaStats, exec: &ExecStats) -> Self {
+        Stats {
+            peak_heap_bytes: arena.peak_heap_bytes,
+            peak_stack_bytes: arena.peak_stack_bytes,
+            alloc_count_ctor: arena.alloc_count_ctor,
+            alloc_count_closure: arena.alloc_count_closure,
+            alloc_bytes_total: arena.alloc_bytes_total,
+            reclaim_count: arena.reclaim_count,
+            reclaim_bytes_total: arena.reclaim_bytes_total,
+            gc_count: arena.gc_count,
+            gc_bytes_reclaimed: arena.gc_bytes_reclaimed,
+            opcode_counts: exec.opcode_counts,
+            peak_call_depth: exec.peak_call_depth,
+        }
+    }
+
+    pub fn instruction_count(&self) -> usize {
+        self.opcode_counts.iter().sum()
+    }
 }
 
 #[cfg(feature = "stats")]
@@ -33,12 +89,13 @@ impl fmt::Display for Stats {
         writeln!(f, "    ctors          {:>6}", self.alloc_count_ctor)?;
         writeln!(f, "    closures       {:>6}", self.alloc_count_closure)?;
         writeln!(f, "    total bytes    {:>6} B", self.alloc_bytes_total)?;
-        writeln!(f, "  execution")?;
-        writeln!(f, "    instructions   {:>6}", self.exec_instruction_count)?;
-        writeln!(f, "    calls          {:>6}", self.exec_call_count)?;
-        writeln!(f, "    tail calls     {:>6}", self.exec_tail_call_count)?;
-        writeln!(f, "    matches        {:>6}", self.exec_match_count)?;
-        writeln!(f, "    peak depth     {:>6}", self.exec_peak_call_depth)?;
+        writeln!(f, "  execution ({} instructions)", self.instruction_count())?;
+        for (i, &count) in self.opcode_counts.iter().enumerate() {
+            if count > 0 {
+                writeln!(f, "    {:18} {:>6}", op::name(i as u8), count)?;
+            }
+        }
+        writeln!(f, "    peak depth     {:>6}", self.peak_call_depth)?;
         writeln!(f, "  reclaim")?;
         writeln!(f, "    count          {:>6}", self.reclaim_count)?;
         writeln!(f, "    bytes total    {:>6} B", self.reclaim_bytes_total)?;

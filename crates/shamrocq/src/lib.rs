@@ -11,6 +11,6 @@ pub mod vm;
 pub use program::{Program, VmError};
 pub use stats::MemSnapshot;
 #[cfg(feature = "stats")]
-pub use stats::Stats;
+pub use stats::{ArenaStats, ExecStats, Stats};
 pub use value::{tags, Value};
 pub use vm::{ForeignFn, Vm};

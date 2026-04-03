@@ -69,7 +69,7 @@ fn main() -> ! {
     } else {
         let _ = hprintln!("unexpected result tag: {}", result.tag());
     }
-    let _ = hprintln!("{}", vm.stats);
+    let _ = hprintln!("{}", vm.combined_stats());
 
     debug::exit(debug::EXIT_SUCCESS);
     loop {}
