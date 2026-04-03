@@ -47,7 +47,7 @@ fn main() -> ! {
         .unwrap_or_else(|e| vm_exit_err(e));
     let len = list_length(&vm, sorted);
     let _ = hprintln!("merge_sort(rev_range({})) -> {} elements", n, len);
-    let _ = hprintln!("{}", vm.stats);
+    let _ = hprintln!("{}", vm.combined_stats());
 
     debug::exit(debug::EXIT_SUCCESS);
     loop {}

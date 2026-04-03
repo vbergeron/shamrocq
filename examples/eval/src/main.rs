@@ -48,7 +48,7 @@ fn main() -> ! {
             None =>    { let _ = hprintln!("church {} + {} (fuel={}) = timeout", a, b, f); }
         }
     }
-    let _ = hprintln!("{}", vm.stats);
+    let _ = hprintln!("{}", vm.combined_stats());
 
     debug::exit(debug::EXIT_SUCCESS);
     loop {}

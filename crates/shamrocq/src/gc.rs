@@ -1,23 +1,18 @@
 use crate::arena::Arena;
+use crate::stats::stat;
 use crate::value::Value;
 
 const REF_BIT: u32 = 1 << 31;
 
-pub struct GcStats {
-    pub words_reclaimed: usize,
-    pub live_words: usize,
-}
-
 impl<'a> Arena<'a> {
-    pub fn collect_garbage(&mut self, extra_roots: &mut [Value]) -> GcStats {
+    pub fn collect_garbage(&mut self, extra_roots: &mut [Value]) {
         let old_heap = self.heap_used();
         self.mark_phase(extra_roots);
         self.compact_phase(extra_roots);
-        let new_heap = self.heap_used();
-        GcStats {
-            words_reclaimed: old_heap.saturating_sub(new_heap),
-            live_words: new_heap,
-        }
+        #[allow(unused_variables)]
+        let reclaimed = old_heap.saturating_sub(self.heap_used());
+        stat!(self, gc_count += 1);
+        stat!(self, gc_bytes_reclaimed += (reclaimed * 4) as u32);
     }
 
     // -- Mark phase --

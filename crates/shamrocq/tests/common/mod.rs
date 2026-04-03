@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use shamrocq::{Value, Vm};
+#[cfg(feature = "stats")]
+use shamrocq_bytecode::op;
 
 use std::collections::HashMap;
 
@@ -83,15 +85,16 @@ pub fn make_list(vm: &mut Vm, tag_nil: u8, tag_cons: u8, items: &[Value]) -> Val
 
 #[cfg(feature = "stats")]
 pub fn print_stats(name: &str, vm: &Vm) {
+    let s = vm.combined_stats();
     eprintln!("[{name}] {}", vm.mem_snapshot());
-    eprintln!("{}", vm.stats);
+    eprintln!("{}", s);
 
     if let Ok(path) = std::env::var("BENCHMARK_FILE") {
         use std::io::Write;
         let commit = std::env::var("BENCHMARK_COMMIT").unwrap_or_else(|_| "unknown".into());
         let timestamp = std::env::var("BENCHMARK_TIMESTAMP").unwrap_or_else(|_| "unknown".into());
-        let s = &vm.stats;
         let snap = vm.mem_snapshot();
+        let oc = &s.opcode_counts;
         let line = format!(
             concat!(
                 "{{\"timestamp\":\"{ts}\",\"commit\":\"{co}\",\"test\":\"{nm}\",",
@@ -107,9 +110,11 @@ pub fn print_stats(name: &str, vm: &Vm) {
             ts = timestamp, co = commit, nm = name,
             ph = s.peak_heap_bytes, ps = s.peak_stack_bytes,
             at = s.alloc_count_ctor, ac = s.alloc_count_closure, ab = s.alloc_bytes_total,
-            ei = s.exec_instruction_count, ea = s.exec_call_count,
-            et = s.exec_tail_call_count,
-            em = s.exec_match_count, ed = s.exec_peak_call_depth,
+            ei = s.instruction_count(),
+            ea = oc[op::CALL as usize] + oc[op::CALL_DYNAMIC as usize],
+            et = oc[op::TAIL_CALL as usize] + oc[op::TAIL_CALL_DYNAMIC as usize],
+            em = oc[op::MATCH as usize] + oc[op::MATCH2 as usize],
+            ed = s.peak_call_depth,
             rc = s.reclaim_count, rb = s.reclaim_bytes_total,
             gc = s.gc_count, gr = s.gc_bytes_reclaimed,
             fh = snap.heap_bytes, fs = snap.stack_bytes, ff = snap.free_bytes,
