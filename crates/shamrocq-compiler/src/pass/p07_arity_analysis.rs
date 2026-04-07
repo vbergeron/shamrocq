@@ -8,7 +8,7 @@
 //! APPLY/GRAB instructions that can bypass partial application when
 //! a function is called with exactly the right number of arguments.
 
-use crate::resolve::{RDefine, RExpr};
+use crate::ir::{RDefine, RExpr};
 use super::ResolvedPass;
 
 pub struct ArityAnalysis;
@@ -40,7 +40,7 @@ pub fn lambda_arity(expr: &RExpr) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolve::RExpr;
+    use crate::ir::RExpr;
 
     #[test]
     fn arity_zero() {

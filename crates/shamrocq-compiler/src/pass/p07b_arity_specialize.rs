@@ -22,7 +22,7 @@
 //! Also flattens nested App chains targeting a known global into AppN
 //! so the above rewrites can fire.
 
-use crate::resolve::{RDefine, RExpr, RMatchCase};
+use crate::ir::{RDefine, RExpr, RExprVisitor};
 use crate::pass::p07_arity_analysis::lambda_arity;
 use crate::pass::p08_anf::shift;
 use super::ResolvedPass;
@@ -34,66 +34,34 @@ impl ResolvedPass for AritySpecialize {
 
     fn run(&self, defs: Vec<RDefine>) -> Vec<RDefine> {
         let arities: Vec<u8> = defs.iter().map(|d| lambda_arity(&d.body)).collect();
-        defs.into_iter()
-            .map(|d| RDefine {
-                name: d.name,
-                global_idx: d.global_idx,
-                body: specialize(d.body, &arities),
-            })
-            .collect()
+        AritySpecializeVisitor { arities }.visit_rprogram(defs)
     }
 }
 
-fn specialize(expr: RExpr, arities: &[u8]) -> RExpr {
-    let expr = flatten_app_chain(expr);
-    match expr {
-        RExpr::AppN(func, args) => {
-            let func = specialize(*func, arities);
-            let args: Vec<RExpr> = args.into_iter().map(|a| specialize(a, arities)).collect();
-            if let RExpr::Global(idx) = &func {
-                let arity = arities.get(*idx as usize).copied().unwrap_or(0) as usize;
-                if arity >= 2 && args.len() > arity {
-                    return split_over(func, args, arity);
+struct AritySpecializeVisitor {
+    arities: Vec<u8>,
+}
+
+impl RExprVisitor for AritySpecializeVisitor {
+    fn visit_rexpr(&mut self, expr: RExpr) -> RExpr {
+        let expr = flatten_app_chain(expr);
+        match expr {
+            RExpr::AppN(func, args) => {
+                let func = self.visit_rexpr(*func);
+                let args: Vec<RExpr> = args.into_iter().map(|a| self.visit_rexpr(a)).collect();
+                if let RExpr::Global(idx) = &func {
+                    let arity = self.arities.get(*idx as usize).copied().unwrap_or(0) as usize;
+                    if arity >= 2 && args.len() > arity {
+                        return split_over(func, args, arity);
+                    }
+                    if arity >= 2 && args.len() >= 2 && args.len() < arity {
+                        return eta_expand_under(func, args, arity);
+                    }
                 }
-                if arity >= 2 && args.len() >= 2 && args.len() < arity {
-                    return eta_expand_under(func, args, arity);
-                }
+                RExpr::AppN(Box::new(func), args)
             }
-            RExpr::AppN(Box::new(func), args)
+            other => self.walk_rexpr(other),
         }
-        RExpr::App(func, arg) => {
-            let func = specialize(*func, arities);
-            let arg = specialize(*arg, arities);
-            RExpr::App(Box::new(func), Box::new(arg))
-        }
-        RExpr::Lambda(body) => RExpr::Lambda(Box::new(specialize(*body, arities))),
-        RExpr::Lambdas(n, body) => RExpr::Lambdas(n, Box::new(specialize(*body, arities))),
-        RExpr::Let(val, body) => {
-            RExpr::Let(Box::new(specialize(*val, arities)), Box::new(specialize(*body, arities)))
-        }
-        RExpr::Letrec(val, body) => {
-            RExpr::Letrec(Box::new(specialize(*val, arities)), Box::new(specialize(*body, arities)))
-        }
-        RExpr::Match(scrut, cases) => RExpr::Match(
-            Box::new(specialize(*scrut, arities)),
-            cases.into_iter().map(|c| RMatchCase {
-                tag: c.tag,
-                arity: c.arity,
-                body: specialize(c.body, arities),
-            }).collect(),
-        ),
-        RExpr::Ctor(tag, fields) => {
-            RExpr::Ctor(tag, fields.into_iter().map(|f| specialize(f, arities)).collect())
-        }
-        RExpr::PrimOp(op, args) => {
-            RExpr::PrimOp(op, args.into_iter().map(|a| specialize(a, arities)).collect())
-        }
-        RExpr::CaseNat(zc, sc, scrut) => RExpr::CaseNat(
-            Box::new(specialize(*zc, arities)),
-            Box::new(specialize(*sc, arities)),
-            Box::new(specialize(*scrut, arities)),
-        ),
-        other => other,
     }
 }
 
@@ -153,7 +121,11 @@ fn eta_expand_under(func: RExpr, args: Vec<RExpr>, arity: usize) -> RExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolve::RExpr;
+    use crate::ir::RExpr;
+
+    fn specialize(expr: RExpr, arities: &[u8]) -> RExpr {
+        AritySpecializeVisitor { arities: arities.to_vec() }.visit_rexpr(expr)
+    }
 
     #[test]
     fn over_application_split() {

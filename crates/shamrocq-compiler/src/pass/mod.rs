@@ -12,8 +12,8 @@ pub mod p08_anf;
 
 use std::collections::HashMap;
 
-use crate::desugar::Define;
-use crate::resolve::RDefine;
+use crate::ir::Define;
+use crate::ir::RDefine;
 
 pub trait ExprPass {
     fn name(&self) -> &'static str;

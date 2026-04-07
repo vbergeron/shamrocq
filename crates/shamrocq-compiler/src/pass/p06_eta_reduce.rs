@@ -9,7 +9,7 @@
 //! not appear free in `f`. This saves one closure allocation and one call
 //! at runtime.
 
-use crate::resolve::{RDefine, RExpr, RMatchCase};
+use crate::ir::{RDefine, RExpr, RExprVisitor};
 use super::ResolvedPass;
 use super::p08_anf::{references_local, shift_down};
 
@@ -19,65 +19,35 @@ impl ResolvedPass for EtaReduce {
     fn name(&self) -> &'static str { "eta_reduce" }
 
     fn run(&self, defs: Vec<RDefine>) -> Vec<RDefine> {
-        defs.into_iter()
-            .map(|d| RDefine {
-                name: d.name,
-                global_idx: d.global_idx,
-                body: reduce(d.body),
-            })
-            .collect()
+        EtaReduceVisitor.visit_rprogram(defs)
     }
 }
 
-fn reduce(expr: RExpr) -> RExpr {
-    match expr {
-        RExpr::Lambda(body) => {
-            let body = reduce(*body);
-            if let RExpr::App(ref f, ref arg) = body {
-                if let RExpr::Local(0) = **arg {
-                    if !references_local(f, 0, 0) {
-                        return shift_down(f, 0, 1);
+struct EtaReduceVisitor;
+
+impl RExprVisitor for EtaReduceVisitor {
+    fn visit_rexpr(&mut self, expr: RExpr) -> RExpr {
+        match expr {
+            RExpr::Lambda(body) => {
+                let body = self.visit_rexpr(*body);
+                if let RExpr::App(ref f, ref arg) = body {
+                    if let RExpr::Local(0) = **arg {
+                        if !references_local(f, 0, 0) {
+                            return shift_down(f, 0, 1);
+                        }
                     }
                 }
+                RExpr::Lambda(Box::new(body))
             }
-            RExpr::Lambda(Box::new(body))
+            other => self.walk_rexpr(other),
         }
-        RExpr::Lambdas(n, body) => RExpr::Lambdas(n, Box::new(reduce(*body))),
-        RExpr::App(f, a) => RExpr::App(Box::new(reduce(*f)), Box::new(reduce(*a))),
-        RExpr::AppN(f, args) => RExpr::AppN(Box::new(reduce(*f)), args.into_iter().map(reduce).collect()),
-        RExpr::Let(val, body) => {
-            RExpr::Let(Box::new(reduce(*val)), Box::new(reduce(*body)))
-        }
-        RExpr::Letrec(val, body) => {
-            RExpr::Letrec(Box::new(reduce(*val)), Box::new(reduce(*body)))
-        }
-        RExpr::Match(scrut, cases) => RExpr::Match(
-            Box::new(reduce(*scrut)),
-            cases.into_iter().map(|c| RMatchCase {
-                tag: c.tag,
-                arity: c.arity,
-                body: reduce(c.body),
-            }).collect(),
-        ),
-        RExpr::Ctor(tag, fields) => {
-            RExpr::Ctor(tag, fields.into_iter().map(reduce).collect())
-        }
-        RExpr::PrimOp(op, args) => {
-            RExpr::PrimOp(op, args.into_iter().map(reduce).collect())
-        }
-        RExpr::CaseNat(zc, sc, scrut) => RExpr::CaseNat(
-            Box::new(reduce(*zc)),
-            Box::new(reduce(*sc)),
-            Box::new(reduce(*scrut)),
-        ),
-        other => other,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolve::RExpr;
+    use crate::ir::RExpr;
 
     fn rdef(name: &str, body: RExpr) -> RDefine {
         RDefine { name: name.to_string(), global_idx: 0, body }

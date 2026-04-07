@@ -9,7 +9,7 @@
 //! After this pass, the resolver no longer needs a special case for `If`
 //! and the rest of the pipeline only deals with `Match`.
 
-use crate::desugar::{Define, Expr, MatchCase};
+use crate::ir::{Define, Expr, ExprVisitor, MatchCase};
 use super::ExprPass;
 
 pub struct IfToMatch;
@@ -18,66 +18,36 @@ impl ExprPass for IfToMatch {
     fn name(&self) -> &'static str { "if_to_match" }
 
     fn run(&self, defs: Vec<Define>) -> Vec<Define> {
-        defs.into_iter()
-            .map(|d| Define {
-                name: d.name,
-                body: lower(d.body),
-            })
-            .collect()
+        IfToMatchVisitor.visit_program(defs)
     }
 }
 
-fn lower(expr: Expr) -> Expr {
-    match expr {
-        Expr::If(c, t, e) => {
-            let c = lower(*c);
-            let t = lower(*t);
-            let e = lower(*e);
-            Expr::Match(
-                Box::new(c),
-                vec![
-                    MatchCase { tag: "True".to_string(), bindings: Vec::new(), body: t },
-                    MatchCase { tag: "False".to_string(), bindings: Vec::new(), body: e },
-                ],
-            )
+struct IfToMatchVisitor;
+
+impl ExprVisitor for IfToMatchVisitor {
+    fn visit_expr(&mut self, expr: Expr) -> Expr {
+        match expr {
+            Expr::If(c, t, e) => {
+                let c = self.visit_expr(*c);
+                let t = self.visit_expr(*t);
+                let e = self.visit_expr(*e);
+                Expr::Match(
+                    Box::new(c),
+                    vec![
+                        MatchCase { tag: "True".to_string(), bindings: Vec::new(), body: t },
+                        MatchCase { tag: "False".to_string(), bindings: Vec::new(), body: e },
+                    ],
+                )
+            }
+            other => self.walk_expr(other),
         }
-        Expr::App(f, a) => Expr::App(Box::new(lower(*f)), Box::new(lower(*a))),
-        Expr::AppN(f, args) => Expr::AppN(Box::new(lower(*f)), args.into_iter().map(lower).collect()),
-        Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(lower(*body))),
-        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(lower(*body))),
-        Expr::Let(name, val, body) => {
-            Expr::Let(name, Box::new(lower(*val)), Box::new(lower(*body)))
-        }
-        Expr::Letrec(name, val, body) => {
-            Expr::Letrec(name, Box::new(lower(*val)), Box::new(lower(*body)))
-        }
-        Expr::Match(scrut, cases) => Expr::Match(
-            Box::new(lower(*scrut)),
-            cases.into_iter().map(|c| MatchCase {
-                tag: c.tag,
-                bindings: c.bindings,
-                body: lower(c.body),
-            }).collect(),
-        ),
-        Expr::Ctor(tag, fields) => {
-            Expr::Ctor(tag, fields.into_iter().map(lower).collect())
-        }
-        Expr::PrimOp(op, args) => {
-            Expr::PrimOp(op, args.into_iter().map(lower).collect())
-        }
-        Expr::CaseNat(zc, sc, scrut) => Expr::CaseNat(
-            Box::new(lower(*zc)),
-            Box::new(lower(*sc)),
-            Box::new(lower(*scrut)),
-        ),
-        other => other,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desugar::Expr;
+    use crate::ir::Expr;
 
     fn def(name: &str, body: Expr) -> Define {
         Define { name: name.to_string(), body }

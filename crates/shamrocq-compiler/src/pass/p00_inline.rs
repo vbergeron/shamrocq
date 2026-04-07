@@ -13,7 +13,7 @@
 //! is used at many call sites.
 
 use std::collections::HashMap;
-use crate::desugar::{Define, Expr, MatchCase};
+use crate::ir::{Define, Expr, ExprRefVisitor, ExprVisitor};
 use super::ExprPass;
 
 pub struct InlineSmallGlobals;
@@ -26,12 +26,7 @@ impl ExprPass for InlineSmallGlobals {
         if candidates.is_empty() {
             return defs;
         }
-        defs.into_iter()
-            .map(|d| Define {
-                name: d.name,
-                body: inline_expr(d.body, &candidates),
-            })
-            .collect()
+        InlineVisitor { candidates }.visit_program(defs)
     }
 }
 
@@ -46,111 +41,74 @@ fn find_candidates(defs: &[Define]) -> HashMap<String, Expr> {
 }
 
 fn is_small(expr: &Expr) -> bool {
-    expr_size(expr) <= 5
+    let mut v = ExprSizeVisitor { size: 0 };
+    v.visit_expr_ref(expr);
+    v.size <= 5
 }
 
-fn expr_size(expr: &Expr) -> usize {
-    match expr {
-        Expr::Var(_) | Expr::Int(_) | Expr::Error | Expr::Foreign(_) => 1,
-        Expr::Bytes(_) => 1,
-        Expr::Ctor(_, fields) => 1 + fields.iter().map(expr_size).sum::<usize>(),
-        Expr::PrimOp(_, args) => 1 + args.iter().map(expr_size).sum::<usize>(),
-        Expr::Lambda(_, body) => 1 + expr_size(body),
-        Expr::Lambdas(params, body) => params.len() + expr_size(body),
-        Expr::App(f, a) => 1 + expr_size(f) + expr_size(a),
-        Expr::AppN(f, args) => 1 + expr_size(f) + args.iter().map(expr_size).sum::<usize>(),
-        Expr::If(c, t, e) => 1 + expr_size(c) + expr_size(t) + expr_size(e),
-        Expr::Let(_, val, body) => 1 + expr_size(val) + expr_size(body),
-        Expr::Letrec(_, val, body) => 1 + expr_size(val) + expr_size(body),
-        Expr::Match(scrut, cases) => {
-            1 + expr_size(scrut) + cases.iter().map(|c| expr_size(&c.body)).sum::<usize>()
+struct ExprSizeVisitor {
+    size: usize,
+}
+
+impl ExprRefVisitor for ExprSizeVisitor {
+    fn visit_expr_ref(&mut self, expr: &Expr) {
+        match expr {
+            Expr::Lambdas(params, body) => {
+                self.size += params.len();
+                self.visit_expr_ref(body);
+            }
+            _ => {
+                self.size += 1;
+                self.walk_expr_ref(expr);
+            }
         }
-        Expr::CaseNat(zc, sc, scrut) => 1 + expr_size(zc) + expr_size(sc) + expr_size(scrut),
     }
 }
 
 fn references_self(expr: &Expr, name: &str) -> bool {
-    match expr {
-        Expr::Var(v) => v == name,
-        Expr::Int(_) | Expr::Error | Expr::Bytes(_) | Expr::Foreign(_) => false,
-        Expr::Ctor(_, fields) => fields.iter().any(|f| references_self(f, name)),
-        Expr::PrimOp(_, args) => args.iter().any(|a| references_self(a, name)),
-        Expr::Lambda(_, body) => references_self(body, name),
-        Expr::Lambdas(_, body) => references_self(body, name),
-        Expr::App(f, a) => references_self(f, name) || references_self(a, name),
-        Expr::AppN(f, args) => references_self(f, name) || args.iter().any(|a| references_self(a, name)),
-        Expr::If(c, t, e) => {
-            references_self(c, name) || references_self(t, name) || references_self(e, name)
+    let mut v = ReferencesVarVisitor { name, found: false };
+    v.visit_expr_ref(expr);
+    v.found
+}
+
+struct ReferencesVarVisitor<'a> {
+    name: &'a str,
+    found: bool,
+}
+
+impl ExprRefVisitor for ReferencesVarVisitor<'_> {
+    fn visit_expr_ref(&mut self, expr: &Expr) {
+        if self.found { return; }
+        if let Expr::Var(v) = expr {
+            if v == self.name { self.found = true; return; }
         }
-        Expr::Let(_, val, body) => references_self(val, name) || references_self(body, name),
-        Expr::Letrec(_, val, body) => references_self(val, name) || references_self(body, name),
-        Expr::Match(scrut, cases) => {
-            references_self(scrut, name)
-                || cases.iter().any(|c| references_self(&c.body, name))
-        }
-        Expr::CaseNat(zc, sc, scrut) => {
-            references_self(zc, name) || references_self(sc, name) || references_self(scrut, name)
-        }
+        self.walk_expr_ref(expr);
     }
 }
 
-fn inline_expr(expr: Expr, candidates: &HashMap<String, Expr>) -> Expr {
-    match expr {
-        Expr::Var(ref name) => {
-            if let Some(body) = candidates.get(name) {
-                body.clone()
-            } else {
-                expr
+struct InlineVisitor {
+    candidates: HashMap<String, Expr>,
+}
+
+impl ExprVisitor for InlineVisitor {
+    fn visit_expr(&mut self, expr: Expr) -> Expr {
+        match expr {
+            Expr::Var(ref name) => {
+                if let Some(body) = self.candidates.get(name) {
+                    body.clone()
+                } else {
+                    expr
+                }
             }
+            other => self.walk_expr(other),
         }
-        Expr::App(f, a) => {
-            Expr::App(Box::new(inline_expr(*f, candidates)), Box::new(inline_expr(*a, candidates)))
-        }
-        Expr::AppN(f, args) => {
-            Expr::AppN(Box::new(inline_expr(*f, candidates)), args.into_iter().map(|a| inline_expr(a, candidates)).collect())
-        }
-        Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(inline_expr(*body, candidates))),
-        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(inline_expr(*body, candidates))),
-        Expr::Let(name, val, body) => {
-            Expr::Let(name, Box::new(inline_expr(*val, candidates)), Box::new(inline_expr(*body, candidates)))
-        }
-        Expr::Letrec(name, val, body) => {
-            Expr::Letrec(name, Box::new(inline_expr(*val, candidates)), Box::new(inline_expr(*body, candidates)))
-        }
-        Expr::If(c, t, e) => {
-            Expr::If(
-                Box::new(inline_expr(*c, candidates)),
-                Box::new(inline_expr(*t, candidates)),
-                Box::new(inline_expr(*e, candidates)),
-            )
-        }
-        Expr::Match(scrut, cases) => Expr::Match(
-            Box::new(inline_expr(*scrut, candidates)),
-            cases.into_iter().map(|c| MatchCase {
-                tag: c.tag,
-                bindings: c.bindings,
-                body: inline_expr(c.body, candidates),
-            }).collect(),
-        ),
-        Expr::Ctor(tag, fields) => {
-            Expr::Ctor(tag, fields.into_iter().map(|f| inline_expr(f, candidates)).collect())
-        }
-        Expr::PrimOp(op, args) => {
-            Expr::PrimOp(op, args.into_iter().map(|a| inline_expr(a, candidates)).collect())
-        }
-        Expr::CaseNat(zc, sc, scrut) => Expr::CaseNat(
-            Box::new(inline_expr(*zc, candidates)),
-            Box::new(inline_expr(*sc, candidates)),
-            Box::new(inline_expr(*scrut, candidates)),
-        ),
-        other => other,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desugar::Expr;
+    use crate::ir::Expr;
 
     fn def(name: &str, body: Expr) -> Define {
         Define { name: name.to_string(), body }

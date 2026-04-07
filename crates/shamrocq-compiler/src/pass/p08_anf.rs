@@ -1,5 +1,4 @@
-use crate::desugar::PrimOp;
-use crate::resolve::{RDefine, RExpr, RMatchCase};
+use crate::ir::{PrimOp, RDefine, RExpr, RMatchCase};
 use super::ResolvedPass;
 
 pub struct AnfNormalize;
