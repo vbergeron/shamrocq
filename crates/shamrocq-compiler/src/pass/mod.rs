@@ -108,7 +108,7 @@ pub fn expr_passes() -> Vec<Box<dyn ExprPass>> {
 pub fn resolved_passes() -> Vec<Box<dyn ResolvedPass>> {
     vec![
         Box::new(p04_dead_binding::DeadBindingElim),
-        Box::new(p04b_contify::Contify),
+        // Box::new(p04b_contify::Contify),
         Box::new(p05_case_known_ctor::CaseOfKnownCtor),
         Box::new(p06_eta_reduce::EtaReduce),
         Box::new(p07_arity_analysis::ArityAnalysis),
