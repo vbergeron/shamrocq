@@ -19,8 +19,7 @@ fn vm_exit_err(e: VmError) -> ! {
 #[entry]
 fn main() -> ! {
     let buf = HEAP();
-    let prog = Program::from_blob(BYTECODE)
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let prog = Program::from_blob_or_exit(BYTECODE, vm_exit_err);
     let mut vm = Vm::new(buf);
     unsafe { enable_dwt_cyccnt(); }
     vm.set_cycle_reader(read_dwt_cyccnt);
@@ -28,19 +27,15 @@ fn main() -> ! {
 
     let n = 50;
 
-    let tree = vm.call(funcs::BUILD_TREE, &[Value::integer(n)])
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let tree = vm.call_or_exit(funcs::BUILD_TREE, &[Value::integer(n)], vm_exit_err);
 
-    let d = vm.call(funcs::DEPTH, &[tree])
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let d = vm.call_or_exit(funcs::DEPTH, &[tree], vm_exit_err);
     let _ = hprintln!("build_tree({}) depth = {}", n, d.integer_value());
 
-    let s = vm.call(funcs::SIZE, &[tree])
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let s = vm.call_or_exit(funcs::SIZE, &[tree], vm_exit_err);
     let _ = hprintln!("build_tree({}) size  = {}", n, s.integer_value());
 
-    let ok = vm.call(funcs::BUILD_AND_CHECK, &[Value::integer(n)])
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let ok = vm.call_or_exit(funcs::BUILD_AND_CHECK, &[Value::integer(n)], vm_exit_err);
     let _ = hprintln!(
         "build_and_check({}) = {}",
         n,

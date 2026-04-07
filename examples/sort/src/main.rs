@@ -28,8 +28,7 @@ fn list_length(vm: &Vm, mut v: Value) -> i32 {
 #[entry]
 fn main() -> ! {
     let buf = HEAP();
-    let prog = Program::from_blob(BYTECODE)
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let prog = Program::from_blob_or_exit(BYTECODE, vm_exit_err);
     let mut vm = Vm::new(buf);
     unsafe { enable_dwt_cyccnt(); }
     vm.set_cycle_reader(read_dwt_cyccnt);
@@ -37,9 +36,7 @@ fn main() -> ! {
 
     let n = 256;
 
-    let sorted = vm
-        .call(funcs::SORT_SEQ, &[Value::integer(n)])
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let sorted = vm.call_or_exit(funcs::SORT_SEQ, &[Value::integer(n)], vm_exit_err);
     let len = list_length(&vm, sorted);
     let _ = hprintln!("merge_sort(rev_range({})) -> {} elements", n, len);
     let _ = hprintln!("{}", vm.combined_stats());
