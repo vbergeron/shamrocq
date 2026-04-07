@@ -27,17 +27,14 @@ fn read_option_nat(vm: &Vm, v: Value) -> Option<i32> {
 #[entry]
 fn main() -> ! {
     let buf = HEAP();
-    let prog = Program::from_blob(BYTECODE)
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let prog = Program::from_blob_or_exit(BYTECODE, vm_exit_err);
     let mut vm = Vm::new(buf);
     unsafe { enable_dwt_cyccnt(); }
     vm.set_cycle_reader(read_dwt_cyccnt);
     vm.load(&prog).unwrap_or_else(|e| vm_exit_err(e));
 
     for &(a, b, f) in &[(1i32, 1i32, 100i32), (1, 2, 200), (2, 2, 500), (2, 3, 1000)] {
-        let r = vm
-            .call(funcs::TEST_ADD, &[Value::integer(a), Value::integer(b), Value::integer(f)])
-            .unwrap_or_else(|e| vm_exit_err(e));
+        let r = vm.call_or_exit(funcs::TEST_ADD, &[Value::integer(a), Value::integer(b), Value::integer(f)], vm_exit_err);
         match read_option_nat(&vm, r) {
             Some(n) => { let _ = hprintln!("church {} + {} (fuel={}) = {}", a, b, f, n); }
             None =>    { let _ = hprintln!("church {} + {} (fuel={}) = timeout", a, b, f); }

@@ -34,8 +34,7 @@ fn build_tlv_stream(out: &mut [u8]) -> usize {
 #[entry]
 fn main() -> ! {
     let buf = HEAP();
-    let prog = Program::from_blob(BYTECODE)
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let prog = Program::from_blob_or_exit(BYTECODE, vm_exit_err);
     let mut vm = Vm::new(buf);
     unsafe { enable_dwt_cyccnt(); }
     vm.set_cycle_reader(read_dwt_cyccnt);
@@ -48,15 +47,13 @@ fn main() -> ! {
         .unwrap_or_else(|e| vm_exit_err(e.into()));
     let fuel = Value::integer(10_000);
 
-    let result = vm.call(funcs::PARSE_BUFFER, &[input, fuel])
-        .unwrap_or_else(|e| vm_exit_err(e));
+    let result = vm.call_or_exit(funcs::PARSE_BUFFER, &[input, fuel], vm_exit_err);
 
     let _ = hprintln!("result tag = {}", result.tag());
     if result.tag() == ctors::INL {
         let pair = vm.ctor_field(result, 0);
         let items = vm.ctor_field(pair, 1);
-        let count = vm.call(funcs::COUNT_TLVS, &[items])
-            .unwrap_or_else(|e| vm_exit_err(e));
+        let count = vm.call_or_exit(funcs::COUNT_TLVS, &[items], vm_exit_err);
         let _ = hprintln!("parsed {} TLV items from {} bytes", count.integer_value(), len);
     } else if result.tag() == ctors::INR {
         let err = vm.ctor_field(result, 0);

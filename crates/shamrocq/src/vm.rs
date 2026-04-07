@@ -146,6 +146,18 @@ impl<'buf> Vm<'buf> {
         self.apply(self.globals[global_idx as usize], args)
     }
 
+    pub fn call_or_exit(
+        &mut self,
+        global_idx: u16,
+        args: &[Value],
+        f: fn(VmError) -> !,
+    ) -> Value {
+        match self.call(global_idx, args) {
+            Ok(v) => v,
+            Err(e) => f(e),
+        }
+    }
+
     pub fn global_value(&self, idx: u16) -> Value {
         self.globals[idx as usize]
     }

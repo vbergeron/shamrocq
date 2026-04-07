@@ -69,6 +69,13 @@ impl<'a> Program<'a> {
         })
     }
 
+    pub fn from_blob_or_exit(blob: &'a [u8], f: fn(VmError) -> !) -> Self {
+        match Self::from_blob(blob) {
+            Ok(p) => p,
+            Err(e) => f(e),
+        }
+    }
+
     pub fn global_code_offset(&self, idx: u16) -> Result<u16, VmError> {
         let mut pos = 0usize;
         for i in 0..self.n_globals {
