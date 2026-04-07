@@ -11,7 +11,6 @@
 
 use crate::ir::{Ctx, RDefines, RExpr};
 use super::ResolvedPass;
-use super::p08_anf::{references_local, shift_down};
 
 pub struct EtaReduce;
 
@@ -29,8 +28,8 @@ fn eta(expr: RExpr) -> RExpr {
             let body = eta(*body);
             if let RExpr::App(ref f, ref arg) = body {
                 if let RExpr::Local(0) = **arg {
-                    if !references_local(f, 0, 0) {
-                        return shift_down(f, 0, 1);
+                    if !f.references_local(0, 0) {
+                        return f.shift_down(0, 1);
                     }
                 }
             }

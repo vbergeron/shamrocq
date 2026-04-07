@@ -23,7 +23,6 @@
 //! so the above rewrites can fire.
 
 use crate::ir::{Ctx, RDefines, RExpr};
-use crate::pass::p08_anf::shift;
 use super::ResolvedPass;
 
 pub struct AritySpecialize;
@@ -100,7 +99,7 @@ fn split_over(func: RExpr, args: Vec<RExpr>, arity: usize) -> RExpr {
 fn eta_expand_under(func: RExpr, args: Vec<RExpr>, arity: usize) -> RExpr {
     let remaining = arity - args.len();
     let mut full_args: Vec<RExpr> = args.iter()
-        .map(|a| shift(a, 0, remaining))
+        .map(|a| a.shift(0, remaining))
         .collect();
     for i in (0..remaining).rev() {
         full_args.push(RExpr::Local(i as u8));

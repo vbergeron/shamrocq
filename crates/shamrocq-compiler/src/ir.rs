@@ -281,6 +281,37 @@ impl RExpr {
         f(self.map_children(Ctx::new(), |child, _| child.bottom_up(f)))
     }
 
+    pub fn is_atomic(&self) -> bool {
+        matches!(self, RExpr::Local(_) | RExpr::Global(_) | RExpr::Int(_) | RExpr::Bytes(_) | RExpr::Foreign(_))
+    }
+
+    pub fn shift(&self, cutoff: usize, amount: usize) -> RExpr {
+        match self {
+            RExpr::Local(idx) if (*idx as usize) >= cutoff => RExpr::Local(*idx + amount as u8),
+            _ => self.map_children_ref(Ctx { depth: cutoff }, |child: &RExpr, ctx: Ctx| {
+                child.shift(ctx.depth, amount)
+            }),
+        }
+    }
+
+    pub fn shift_down(&self, cutoff: usize, amount: usize) -> RExpr {
+        match self {
+            RExpr::Local(idx) if (*idx as usize) >= cutoff => RExpr::Local(idx.wrapping_sub(amount as u8)),
+            _ => self.map_children_ref(Ctx { depth: cutoff }, |child: &RExpr, ctx: Ctx| {
+                child.shift_down(ctx.depth, amount)
+            }),
+        }
+    }
+
+    pub fn references_local(&self, target: u8, depth: usize) -> bool {
+        match self {
+            RExpr::Local(idx) => *idx as usize == target as usize + depth,
+            _ => self.any_child(Ctx { depth }, |child: &RExpr, ctx: Ctx| {
+                child.references_local(target, ctx.depth)
+            }),
+        }
+    }
+
     /// Count the depth of the outermost Lambda/Lambdas chain.
     pub fn lambda_arity(&self) -> u8 {
         let mut depth: u8 = 0;

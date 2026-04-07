@@ -20,12 +20,16 @@ impl ExprPass for ConstantFold {
     fn name(&self) -> &'static str { "constant_fold" }
 
     fn run(&self, defs: Defines) -> Defines {
-        defs.bottom_up(&|e| match e {
-            Expr::PrimOp(op, args) => fold_primop(op, args),
-            Expr::Match(scrut, cases) => fold_match(*scrut, cases),
-            Expr::If(c, t, e) => fold_if(*c, *t, *e),
-            other => other,
-        })
+        defs.bottom_up(&constant_fold)
+    }
+}
+
+fn constant_fold(e: Expr) -> Expr {
+    match e {
+        Expr::PrimOp(op, args) => fold_primop(op, args),
+        Expr::Match(scrut, cases) => fold_match(*scrut, cases),
+        Expr::If(c, t, e) => fold_if(*c, *t, *e),
+        other => other,
     }
 }
 

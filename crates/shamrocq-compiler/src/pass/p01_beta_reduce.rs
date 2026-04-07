@@ -17,16 +17,20 @@ impl ExprPass for BetaReduce {
     fn name(&self) -> &'static str { "beta_reduce" }
 
     fn run(&self, defs: Defines) -> Defines {
-        defs.bottom_up(&|e| match e {
-            Expr::App(func, arg) => {
-                if let Expr::Lambda(param, body) = *func {
-                    Expr::Let(param, arg, body)
-                } else {
-                    Expr::App(func, arg)
-                }
+        defs.bottom_up(&beta_reduce)
+    }
+}
+
+fn beta_reduce(e: Expr) -> Expr {
+    match e {
+        Expr::App(func, arg) => {
+            if let Expr::Lambda(param, body) = *func {
+                Expr::Let(param, arg, body)
+            } else {
+                Expr::App(func, arg)
             }
-            other => other,
-        })
+        }
+        other => other,
     }
 }
 
