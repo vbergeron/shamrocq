@@ -13,7 +13,6 @@
 
 use crate::ir::{Ctx, RDefines, RExpr, RMatchCase};
 use super::ResolvedPass;
-use super::p08_anf::{shift, shift_down};
 
 pub struct CaseOfKnownCtor;
 
@@ -62,7 +61,7 @@ fn case_known(expr: RExpr) -> RExpr {
 /// result down by arity.
 fn subst_fields(body: &RExpr, fields: &[RExpr], arity: usize) -> RExpr {
     let substituted = subst_rec(body, fields, arity, 0);
-    shift_down(&substituted, 0, arity)
+    substituted.shift_down(0, arity)
 }
 
 fn subst_rec(expr: &RExpr, fields: &[RExpr], arity: usize, depth: usize) -> RExpr {
@@ -70,7 +69,7 @@ fn subst_rec(expr: &RExpr, fields: &[RExpr], arity: usize, depth: usize) -> RExp
         RExpr::Local(idx) => {
             let idx = *idx as usize;
             if idx >= depth && idx < depth + arity {
-                shift(&fields[arity - 1 - (idx - depth)], 0, depth)
+                fields[arity - 1 - (idx - depth)].shift(0, depth)
             } else if idx >= depth + arity {
                 RExpr::Local((idx + arity) as u8)
             } else {

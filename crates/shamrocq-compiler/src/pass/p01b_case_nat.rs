@@ -21,16 +21,20 @@ impl ExprPass for CaseNat {
     fn name(&self) -> &'static str { "case_nat" }
 
     fn run(&self, defs: Defines) -> Defines {
-        defs.bottom_up(&|e| match e {
-            Expr::AppN(f, args) => {
-                if let Some((zc, sc, scrut)) = try_match_nat_elim(&f, &args) {
-                    Expr::CaseNat(Box::new(zc), Box::new(sc), Box::new(scrut))
-                } else {
-                    Expr::AppN(f, args)
-                }
+        defs.bottom_up(&case_nat)
+    }
+}
+
+fn case_nat(e: Expr) -> Expr {
+    match e {
+        Expr::AppN(f, args) => {
+            if let Some((zc, sc, scrut)) = try_match_nat_elim(&f, &args) {
+                Expr::CaseNat(Box::new(zc), Box::new(sc), Box::new(scrut))
+            } else {
+                Expr::AppN(f, args)
             }
-            other => other,
-        })
+        }
+        other => other,
     }
 }
 

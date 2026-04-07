@@ -26,16 +26,14 @@ impl ExprPass for InlineSmallGlobals {
         if candidates.is_empty() {
             return defs;
         }
-        defs.bottom_up(&|e| match e {
-            Expr::Var(ref name) => {
-                if let Some(body) = candidates.get(name) {
-                    body.clone()
-                } else {
-                    e
-                }
-            }
-            other => other,
-        })
+        defs.bottom_up(&|e| inline_var(e, &candidates))
+    }
+}
+
+fn inline_var(e: Expr, candidates: &HashMap<String, Expr>) -> Expr {
+    match e {
+        Expr::Var(ref name) => candidates.get(name).cloned().unwrap_or(e),
+        other => other,
     }
 }
 

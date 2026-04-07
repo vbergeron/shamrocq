@@ -10,7 +10,6 @@
 
 use crate::ir::{Ctx, RDefines, RExpr};
 use super::ResolvedPass;
-use super::p08_anf::{references_local, shift_down};
 
 pub struct DeadBindingElim;
 
@@ -27,8 +26,8 @@ fn dead_bind(expr: RExpr) -> RExpr {
         RExpr::Let(val, body) => {
             let val = dead_bind(*val);
             let body = dead_bind(*body);
-            if !references_local(&body, 0, 0) {
-                shift_down(&body, 0, 1)
+            if !body.references_local(0, 0) {
+                body.shift_down(0, 1)
             } else {
                 RExpr::Let(Box::new(val), Box::new(body))
             }

@@ -18,18 +18,22 @@ impl ExprPass for IfToMatch {
     fn name(&self) -> &'static str { "if_to_match" }
 
     fn run(&self, defs: Defines) -> Defines {
-        defs.bottom_up(&|e| match e {
-            Expr::If(c, t, e) => {
-                Expr::Match(
-                    c,
-                    vec![
-                        MatchCase { tag: "True".to_string(), bindings: Vec::new(), body: *t },
-                        MatchCase { tag: "False".to_string(), bindings: Vec::new(), body: *e },
-                    ],
-                )
-            }
-            other => other,
-        })
+        defs.bottom_up(&if_to_match)
+    }
+}
+
+fn if_to_match(e: Expr) -> Expr {
+    match e {
+        Expr::If(c, t, e) => {
+            Expr::Match(
+                c,
+                vec![
+                    MatchCase { tag: "True".to_string(), bindings: Vec::new(), body: *t },
+                    MatchCase { tag: "False".to_string(), bindings: Vec::new(), body: *e },
+                ],
+            )
+        }
+        other => other,
     }
 }
 
