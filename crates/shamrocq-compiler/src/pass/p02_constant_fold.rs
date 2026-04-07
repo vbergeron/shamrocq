@@ -11,7 +11,7 @@
 //!     (if True a b)                      =>  a
 //!     (match (True) ((True) a) ((False) b))  =>  a
 
-use crate::desugar::{Define, Expr, MatchCase, PrimOp};
+use crate::ir::{Define, Expr, ExprVisitor, MatchCase, PrimOp};
 use super::ExprPass;
 
 pub struct ConstantFold;
@@ -20,71 +20,52 @@ impl ExprPass for ConstantFold {
     fn name(&self) -> &'static str { "constant_fold" }
 
     fn run(&self, defs: Vec<Define>) -> Vec<Define> {
-        defs.into_iter()
-            .map(|d| Define {
-                name: d.name,
-                body: fold(d.body),
-            })
-            .collect()
+        ConstantFoldVisitor.visit_program(defs)
     }
 }
 
-fn fold(expr: Expr) -> Expr {
-    match expr {
-        Expr::PrimOp(op, args) => {
-            let args: Vec<Expr> = args.into_iter().map(fold).collect();
-            fold_primop(op, args)
-        }
-        Expr::Match(scrut, cases) => {
-            let scrut = fold(*scrut);
-            let cases: Vec<MatchCase> = cases.into_iter().map(|c| MatchCase {
-                tag: c.tag,
-                bindings: c.bindings,
-                body: fold(c.body),
-            }).collect();
-            if let Expr::Ctor(ref tag, ref fields) = scrut {
-                if fields.is_empty() {
-                    if let Some(case) = cases.iter().find(|c| c.tag == *tag) {
-                        if case.bindings.is_empty() {
-                            return case.body.clone();
+struct ConstantFoldVisitor;
+
+impl ExprVisitor for ConstantFoldVisitor {
+    fn visit_expr(&mut self, expr: Expr) -> Expr {
+        match expr {
+            Expr::PrimOp(op, args) => {
+                let args: Vec<Expr> = args.into_iter().map(|a| self.visit_expr(a)).collect();
+                fold_primop(op, args)
+            }
+            Expr::Match(scrut, cases) => {
+                let scrut = self.visit_expr(*scrut);
+                let cases: Vec<MatchCase> = cases.into_iter().map(|c| MatchCase {
+                    tag: c.tag,
+                    bindings: c.bindings,
+                    body: self.visit_expr(c.body),
+                }).collect();
+                if let Expr::Ctor(ref tag, ref fields) = scrut {
+                    if fields.is_empty() {
+                        if let Some(case) = cases.iter().find(|c| c.tag == *tag) {
+                            if case.bindings.is_empty() {
+                                return case.body.clone();
+                            }
                         }
                     }
                 }
+                Expr::Match(Box::new(scrut), cases)
             }
-            Expr::Match(Box::new(scrut), cases)
-        }
-        Expr::If(c, t, e) => {
-            let c = fold(*c);
-            let t = fold(*t);
-            let e = fold(*e);
-            match &c {
-                Expr::Ctor(tag, fields) if fields.is_empty() => {
-                    if tag == "True" { return t; }
-                    if tag == "False" { return e; }
+            Expr::If(c, t, e) => {
+                let c = self.visit_expr(*c);
+                let t = self.visit_expr(*t);
+                let e = self.visit_expr(*e);
+                match &c {
+                    Expr::Ctor(tag, fields) if fields.is_empty() => {
+                        if tag == "True" { return t; }
+                        if tag == "False" { return e; }
+                    }
+                    _ => {}
                 }
-                _ => {}
+                Expr::If(Box::new(c), Box::new(t), Box::new(e))
             }
-            Expr::If(Box::new(c), Box::new(t), Box::new(e))
+            other => self.walk_expr(other),
         }
-        Expr::App(f, a) => Expr::App(Box::new(fold(*f)), Box::new(fold(*a))),
-        Expr::AppN(f, args) => Expr::AppN(Box::new(fold(*f)), args.into_iter().map(fold).collect()),
-        Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(fold(*body))),
-        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(fold(*body))),
-        Expr::Let(name, val, body) => {
-            Expr::Let(name, Box::new(fold(*val)), Box::new(fold(*body)))
-        }
-        Expr::Letrec(name, val, body) => {
-            Expr::Letrec(name, Box::new(fold(*val)), Box::new(fold(*body)))
-        }
-        Expr::Ctor(tag, fields) => {
-            Expr::Ctor(tag, fields.into_iter().map(fold).collect())
-        }
-        Expr::CaseNat(zc, sc, scrut) => Expr::CaseNat(
-            Box::new(fold(*zc)),
-            Box::new(fold(*sc)),
-            Box::new(fold(*scrut)),
-        ),
-        other => other,
     }
 }
 
@@ -116,7 +97,7 @@ fn fold_primop(op: PrimOp, args: Vec<Expr>) -> Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desugar::Expr;
+    use crate::ir::Expr;
 
     fn def(name: &str, body: Expr) -> Define {
         Define { name: name.to_string(), body }

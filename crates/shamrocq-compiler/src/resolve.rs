@@ -1,46 +1,6 @@
 use std::collections::HashMap;
 
-use crate::desugar::{Define, Expr, PrimOp};
-
-/// Resolved IR: variables are indices, constructors are tag IDs.
-#[derive(Debug, Clone, PartialEq)]
-pub enum RExpr {
-    /// Local variable, de Bruijn index (0 = innermost)
-    Local(u8),
-    /// Global variable by slot index
-    Global(u16),
-    Int(i32),
-    Bytes(Vec<u8>),
-    /// Constructor: tag id + resolved field exprs
-    Ctor(u8, Vec<RExpr>),
-    PrimOp(PrimOp, Vec<RExpr>),
-    Lambda(Box<RExpr>),
-    Lambdas(u8, Box<RExpr>),
-    App(Box<RExpr>, Box<RExpr>),
-    AppN(Box<RExpr>, Vec<RExpr>),
-    Let(Box<RExpr>, Box<RExpr>),
-    Letrec(Box<RExpr>, Box<RExpr>),
-    Match(Box<RExpr>, Vec<RMatchCase>),
-    /// Nat eliminator: CaseNat(zero_case, succ_case, scrutinee)
-    CaseNat(Box<RExpr>, Box<RExpr>, Box<RExpr>),
-    Error,
-    /// A host-provided foreign function, identified by its registration index.
-    Foreign(u16),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RMatchCase {
-    pub tag: u8,
-    pub arity: u8,
-    pub body: RExpr,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct RDefine {
-    pub name: String,
-    pub global_idx: u16,
-    pub body: RExpr,
-}
+use crate::ir::{Define, Expr, RDefine, RExpr, RMatchCase};
 
 /// Interns constructor tag names to u8 IDs.
 pub struct TagTable {

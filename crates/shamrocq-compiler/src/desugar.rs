@@ -1,48 +1,5 @@
+use crate::ir::{Define, Expr, MatchCase, PrimOp};
 use crate::parser::Sexp;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PrimOp {
-    Add, Sub, Mul, Div, Neg, Eq, Lt,
-    BytesLen, BytesGet, BytesEq, BytesCat,
-}
-
-/// High-level IR after desugaring, before variable resolution.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
-    Var(String),
-    Int(i32),
-    Bytes(Vec<u8>),
-    /// Nullary or N-ary constructor application via quasiquote: `(Tag field...)
-    Ctor(String, Vec<Expr>),
-    PrimOp(PrimOp, Vec<Expr>),
-    Lambda(String, Box<Expr>),
-    Lambdas(Vec<String>, Box<Expr>),
-    App(Box<Expr>, Box<Expr>),
-    AppN(Box<Expr>, Vec<Expr>),
-    If(Box<Expr>, Box<Expr>, Box<Expr>),
-    Let(String, Box<Expr>, Box<Expr>),
-    Letrec(String, Box<Expr>, Box<Expr>),
-    Match(Box<Expr>, Vec<MatchCase>),
-    /// Nat eliminator: CaseNat(zero_case, succ_case, scrutinee)
-    CaseNat(Box<Expr>, Box<Expr>, Box<Expr>),
-    Error,
-    /// A host-provided foreign function, identified by its registration index.
-    Foreign(u16),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct MatchCase {
-    pub tag: String,
-    pub bindings: Vec<String>,
-    pub body: Expr,
-}
-
-/// Top-level definition.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Define {
-    pub name: String,
-    pub body: Expr,
-}
 
 /// Desugar a list of top-level S-expressions into Defines.
 /// Skips `load` forms.

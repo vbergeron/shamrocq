@@ -12,7 +12,7 @@
 //! No new variable bindings are introduced, avoiding the scoping issues
 //! that plagued the Let-based rewriting approach.
 
-use crate::desugar::{Define, Expr, MatchCase, PrimOp};
+use crate::ir::{Define, Expr, ExprVisitor, PrimOp};
 use super::ExprPass;
 
 pub struct CaseNat;
@@ -21,12 +21,7 @@ impl ExprPass for CaseNat {
     fn name(&self) -> &'static str { "case_nat" }
 
     fn run(&self, defs: Vec<Define>) -> Vec<Define> {
-        defs.into_iter()
-            .map(|d| Define {
-                name: d.name,
-                body: reduce(d.body),
-            })
-            .collect()
+        CaseNatVisitor.visit_program(defs)
     }
 }
 
@@ -78,56 +73,29 @@ fn try_match_nat_elim(func: &Expr, args: &[Expr]) -> Option<(Expr, Expr, Expr)> 
     Some((args[0].clone(), args[1].clone(), args[2].clone()))
 }
 
-fn reduce(expr: Expr) -> Expr {
-    match expr {
-        Expr::AppN(f, args) => {
-            let f = reduce(*f);
-            let args: Vec<Expr> = args.into_iter().map(reduce).collect();
-            if let Some((zc, sc, scrut)) = try_match_nat_elim(&f, &args) {
-                Expr::CaseNat(Box::new(zc), Box::new(sc), Box::new(scrut))
-            } else {
-                Expr::AppN(Box::new(f), args)
+struct CaseNatVisitor;
+
+impl ExprVisitor for CaseNatVisitor {
+    fn visit_expr(&mut self, expr: Expr) -> Expr {
+        match expr {
+            Expr::AppN(f, args) => {
+                let f = self.visit_expr(*f);
+                let args: Vec<Expr> = args.into_iter().map(|a| self.visit_expr(a)).collect();
+                if let Some((zc, sc, scrut)) = try_match_nat_elim(&f, &args) {
+                    Expr::CaseNat(Box::new(zc), Box::new(sc), Box::new(scrut))
+                } else {
+                    Expr::AppN(Box::new(f), args)
+                }
             }
+            other => self.walk_expr(other),
         }
-        Expr::App(f, a) => Expr::App(Box::new(reduce(*f)), Box::new(reduce(*a))),
-        Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(reduce(*body))),
-        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(reduce(*body))),
-        Expr::Let(name, val, body) => {
-            Expr::Let(name, Box::new(reduce(*val)), Box::new(reduce(*body)))
-        }
-        Expr::Letrec(name, val, body) => {
-            Expr::Letrec(name, Box::new(reduce(*val)), Box::new(reduce(*body)))
-        }
-        Expr::If(c, t, e) => {
-            Expr::If(Box::new(reduce(*c)), Box::new(reduce(*t)), Box::new(reduce(*e)))
-        }
-        Expr::Match(scrut, cases) => Expr::Match(
-            Box::new(reduce(*scrut)),
-            cases.into_iter().map(|c| MatchCase {
-                tag: c.tag,
-                bindings: c.bindings,
-                body: reduce(c.body),
-            }).collect(),
-        ),
-        Expr::Ctor(tag, fields) => {
-            Expr::Ctor(tag, fields.into_iter().map(reduce).collect())
-        }
-        Expr::PrimOp(op, args) => {
-            Expr::PrimOp(op, args.into_iter().map(reduce).collect())
-        }
-        Expr::CaseNat(zc, sc, scrut) => Expr::CaseNat(
-            Box::new(reduce(*zc)),
-            Box::new(reduce(*sc)),
-            Box::new(reduce(*scrut)),
-        ),
-        other => other,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desugar::Expr;
+    use crate::ir::Expr;
 
     fn def(name: &str, body: Expr) -> Define {
         Define { name: name.to_string(), body }

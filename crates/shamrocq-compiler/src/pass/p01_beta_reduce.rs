@@ -8,7 +8,7 @@
 //! them with a simple BIND. Only fires when the lambda is syntactically in
 //! function position (not a variable reference), so it never duplicates code.
 
-use crate::desugar::{Define, Expr, MatchCase};
+use crate::ir::{Define, Expr, ExprVisitor};
 use super::ExprPass;
 
 pub struct BetaReduce;
@@ -17,67 +17,33 @@ impl ExprPass for BetaReduce {
     fn name(&self) -> &'static str { "beta_reduce" }
 
     fn run(&self, defs: Vec<Define>) -> Vec<Define> {
-        defs.into_iter()
-            .map(|d| Define {
-                name: d.name,
-                body: reduce(d.body),
-            })
-            .collect()
+        BetaReduceVisitor.visit_program(defs)
     }
 }
 
-fn reduce(expr: Expr) -> Expr {
-    match expr {
-        Expr::App(func, arg) => {
-            let func = reduce(*func);
-            let arg = reduce(*arg);
-            if let Expr::Lambda(param, body) = func {
-                Expr::Let(param, Box::new(arg), body)
-            } else {
-                Expr::App(Box::new(func), Box::new(arg))
+struct BetaReduceVisitor;
+
+impl ExprVisitor for BetaReduceVisitor {
+    fn visit_expr(&mut self, expr: Expr) -> Expr {
+        match expr {
+            Expr::App(func, arg) => {
+                let func = self.visit_expr(*func);
+                let arg = self.visit_expr(*arg);
+                if let Expr::Lambda(param, body) = func {
+                    Expr::Let(param, Box::new(arg), body)
+                } else {
+                    Expr::App(Box::new(func), Box::new(arg))
+                }
             }
+            other => self.walk_expr(other),
         }
-        Expr::AppN(f, args) => {
-            Expr::AppN(Box::new(reduce(*f)), args.into_iter().map(reduce).collect())
-        }
-        Expr::Lambda(p, body) => Expr::Lambda(p, Box::new(reduce(*body))),
-        Expr::Lambdas(params, body) => Expr::Lambdas(params, Box::new(reduce(*body))),
-        Expr::Let(name, val, body) => {
-            Expr::Let(name, Box::new(reduce(*val)), Box::new(reduce(*body)))
-        }
-        Expr::Letrec(name, val, body) => {
-            Expr::Letrec(name, Box::new(reduce(*val)), Box::new(reduce(*body)))
-        }
-        Expr::If(c, t, e) => {
-            Expr::If(Box::new(reduce(*c)), Box::new(reduce(*t)), Box::new(reduce(*e)))
-        }
-        Expr::Match(scrut, cases) => Expr::Match(
-            Box::new(reduce(*scrut)),
-            cases.into_iter().map(|c| MatchCase {
-                tag: c.tag,
-                bindings: c.bindings,
-                body: reduce(c.body),
-            }).collect(),
-        ),
-        Expr::Ctor(tag, fields) => {
-            Expr::Ctor(tag, fields.into_iter().map(reduce).collect())
-        }
-        Expr::PrimOp(op, args) => {
-            Expr::PrimOp(op, args.into_iter().map(reduce).collect())
-        }
-        Expr::CaseNat(zc, sc, scrut) => Expr::CaseNat(
-            Box::new(reduce(*zc)),
-            Box::new(reduce(*sc)),
-            Box::new(reduce(*scrut)),
-        ),
-        other => other,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desugar::Expr;
+    use crate::ir::Expr;
 
     fn def(name: &str, body: Expr) -> Define {
         Define { name: name.to_string(), body }

@@ -11,7 +11,7 @@
 //! For nullary constructors the substitution is trivial (just pick the body).
 //! This often fires after constant folding or inlining produces known ctors.
 
-use crate::resolve::{RDefine, RExpr, RMatchCase};
+use crate::ir::{RDefine, RExpr, RExprVisitor, RMatchCase};
 use super::ResolvedPass;
 use super::p08_anf::{shift, shift_down};
 
@@ -21,61 +21,38 @@ impl ResolvedPass for CaseOfKnownCtor {
     fn name(&self) -> &'static str { "case_of_known_ctor" }
 
     fn run(&self, defs: Vec<RDefine>) -> Vec<RDefine> {
-        defs.into_iter()
-            .map(|d| RDefine {
-                name: d.name,
-                global_idx: d.global_idx,
-                body: optimize(d.body),
-            })
-            .collect()
+        CaseOfKnownCtorVisitor.visit_rprogram(defs)
     }
 }
 
-fn optimize(expr: RExpr) -> RExpr {
-    match expr {
-        RExpr::Match(scrut, cases) => {
-            let scrut = optimize(*scrut);
-            let cases: Vec<RMatchCase> = cases.into_iter().map(|c| RMatchCase {
-                tag: c.tag,
-                arity: c.arity,
-                body: optimize(c.body),
-            }).collect();
+struct CaseOfKnownCtorVisitor;
 
-            if let RExpr::Ctor(tag, ref fields) = scrut {
-                if let Some(case) = cases.iter().find(|c| c.tag == tag) {
-                    let arity = case.arity as usize;
-                    if arity == 0 {
-                        return case.body.clone();
-                    }
-                    if arity == fields.len() {
-                        return subst_fields(&case.body, fields, arity);
+impl RExprVisitor for CaseOfKnownCtorVisitor {
+    fn visit_rexpr(&mut self, expr: RExpr) -> RExpr {
+        match expr {
+            RExpr::Match(scrut, cases) => {
+                let scrut = self.visit_rexpr(*scrut);
+                let cases: Vec<RMatchCase> = cases.into_iter().map(|c| RMatchCase {
+                    tag: c.tag,
+                    arity: c.arity,
+                    body: self.visit_rexpr(c.body),
+                }).collect();
+
+                if let RExpr::Ctor(tag, ref fields) = scrut {
+                    if let Some(case) = cases.iter().find(|c| c.tag == tag) {
+                        let arity = case.arity as usize;
+                        if arity == 0 {
+                            return case.body.clone();
+                        }
+                        if arity == fields.len() {
+                            return subst_fields(&case.body, fields, arity);
+                        }
                     }
                 }
+                RExpr::Match(Box::new(scrut), cases)
             }
-            RExpr::Match(Box::new(scrut), cases)
+            other => self.walk_rexpr(other),
         }
-        RExpr::Lambda(body) => RExpr::Lambda(Box::new(optimize(*body))),
-        RExpr::Lambdas(n, body) => RExpr::Lambdas(n, Box::new(optimize(*body))),
-        RExpr::App(f, a) => RExpr::App(Box::new(optimize(*f)), Box::new(optimize(*a))),
-        RExpr::AppN(f, args) => RExpr::AppN(Box::new(optimize(*f)), args.into_iter().map(optimize).collect()),
-        RExpr::Let(val, body) => {
-            RExpr::Let(Box::new(optimize(*val)), Box::new(optimize(*body)))
-        }
-        RExpr::Letrec(val, body) => {
-            RExpr::Letrec(Box::new(optimize(*val)), Box::new(optimize(*body)))
-        }
-        RExpr::Ctor(tag, fields) => {
-            RExpr::Ctor(tag, fields.into_iter().map(optimize).collect())
-        }
-        RExpr::PrimOp(op, args) => {
-            RExpr::PrimOp(op, args.into_iter().map(optimize).collect())
-        }
-        RExpr::CaseNat(zc, sc, scrut) => RExpr::CaseNat(
-            Box::new(optimize(*zc)),
-            Box::new(optimize(*sc)),
-            Box::new(optimize(*scrut)),
-        ),
-        other => other,
     }
 }
 
@@ -157,7 +134,7 @@ fn subst_rec(expr: &RExpr, fields: &[RExpr], arity: usize, depth: usize) -> RExp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resolve::RExpr;
+    use crate::ir::RExpr;
 
     fn rdef(name: &str, body: RExpr) -> RDefine {
         RDefine { name: name.to_string(), global_idx: 0, body }
@@ -195,7 +172,7 @@ mod tests {
         // match Pair(10, 20) with Pair(a, b) -> (+ a b)
         //   =>  (+ 10 20)
         // In de Bruijn: Local(1) = field 0, Local(0) = field 1
-        use crate::desugar::PrimOp;
+        use crate::ir::PrimOp;
         let input = rdef("f", RExpr::Match(
             Box::new(RExpr::Ctor(0, vec![RExpr::Int(10), RExpr::Int(20)])),
             vec![

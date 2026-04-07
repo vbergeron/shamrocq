@@ -1,7 +1,7 @@
 use crate::bytecode::{Emitter, ProgramHeader};
-use crate::desugar::PrimOp;
+use crate::ir::PrimOp;
 use crate::pass::p07_arity_analysis::lambda_arity;
-use crate::resolve::{RDefine, RExpr, RMatchCase};
+use crate::ir::{RDefine, RExpr, RMatchCase};
 
 pub struct CompiledProgram {
     pub header: ProgramHeader,

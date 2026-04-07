@@ -1,6 +1,7 @@
 pub mod bytecode;
 pub mod codegen;
 pub mod desugar;
+pub mod ir;
 pub mod parser;
 pub mod pass;
 pub mod resolve;
